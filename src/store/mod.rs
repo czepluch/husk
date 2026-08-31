@@ -15,8 +15,10 @@ pub trait Store {
     fn tasks(&self, project: Option<&ProjectId>) -> Result<Vec<Task>>;
     fn get(&self, uid: &str) -> Result<Task>;
     fn create(&self, project: &ProjectId, task: NewTask) -> Result<Task>;
-    /// Writes the task's changes. A task that was not changed is not written.
-    fn save(&self, task: &Task) -> Result<()>;
+    /// Writes the task's changes and updates `task` to match the file, so it
+    /// can be edited and saved again. A task that was not changed is not
+    /// written.
+    fn save(&self, task: &mut Task) -> Result<()>;
     fn delete(&self, uid: &str) -> Result<()>;
     fn move_to(&self, uid: &str, project: &ProjectId) -> Result<()>;
 }

@@ -71,7 +71,7 @@ Properties husk reads and writes:
 | `UID` | uuid v4, set on create, never changed |
 | `SUMMARY` | title |
 | `DESCRIPTION` | notes, multi-line |
-| `DUE` | `DATE` for all-day. Timed values are read as `DATE-TIME` with `TZID`, as UTC (`Z`), or floating (treated as local). New timed values written by husk are UTC, so husk never has to generate a `VTIMEZONE`; edits keep the form the file already uses (Apple writes `TZID` plus a `VTIMEZONE` component, preserved like any other component) |
+| `DUE` | `DATE` for all-day. Timed values are read as `DATE-TIME` with `TZID`, as UTC (`Z`), or floating (treated as local). New timed values written by husk are UTC, so husk never has to generate a `VTIMEZONE`; edits keep the form the file already uses (Apple writes `TZID` plus a `VTIMEZONE` component, preserved like any other component). A `TZID` chrono-tz does not know is read as local time and, once edited, written as UTC with the `TZID` dropped |
 | `DTSTART` | Not modelled. Apple writes it equal to `DUE` on every dated task; Tasks.org writes it as a separate start date. When `DUE` changes: if `DTSTART` equals the old `DUE`, move it too; otherwise leave it unless it would end up after the new `DUE`, in which case clamp it to `DUE`. Never add it |
 | `STATUS` | `NEEDS-ACTION`, `IN-PROCESS`, `COMPLETED`, `CANCELLED`. Tasks.org omits it on new tasks; missing means `NEEDS-ACTION` |
 | `COMPLETED` | UTC timestamp, set together with `STATUS:COMPLETED` and `PERCENT-COMPLETE:100` (Apple writes all three) |
@@ -114,7 +114,7 @@ pub trait Store {
     fn tasks(&self, project: Option<&ProjectId>) -> Result<Vec<Task>>;
     fn get(&self, uid: &str) -> Result<Task>;
     fn create(&self, project: &ProjectId, task: NewTask) -> Result<Task>;
-    fn save(&self, task: &Task) -> Result<()>;
+    fn save(&self, task: &mut Task) -> Result<()>;   // refreshes the task to what was written
     fn delete(&self, uid: &str) -> Result<()>;
     fn move_to(&self, uid: &str, project: &ProjectId) -> Result<()>;
 }
@@ -123,7 +123,7 @@ pub trait Store {
 `VdirStore` is the only implementation in v1. Rules:
 
 - Write atomically: serialize to `<uid>.ics.tmp` in the same directory, fsync, rename over the target. vdirsyncer detects the change by etag (file hash), so partial writes must never be visible.
-- On every save: `SEQUENCE += 1`, `LAST-MODIFIED` and `DTSTAMP` = now (UTC). Phone clients use these to decide which side wins.
+- On every save: `SEQUENCE += 1`, `LAST-MODIFIED` and `DTSTAMP` = now (UTC). Phone clients use these to decide which side wins. A save of an unchanged task writes nothing, and a save is refused when the file's parsed content changed since the task was read, so an edit synced from a phone in between is never overwritten.
 - Move between projects = write into the new directory, delete from the old one, same UID. vdirsyncer handles this as delete plus create on the server, which is what CalDAV expects.
 - Delete = remove the file. Offer a session-level undo by keeping the last N removed or overwritten file contents in memory.
 - Line folding at 75 octets, escape `,` `;` `\` and newlines in text values. Unfold on read. Get this right once, in one place, with tests.

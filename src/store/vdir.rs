@@ -72,24 +72,36 @@ impl VdirStore {
         vtodo::parse_task(&text, id.clone()).with_context(|| format!("parse {}", path.display()))
     }
 
-    /// Finds the file holding a UID. `<uid>.ics` is tried first; file names
-    /// are not guaranteed to match, so the fallback reads every file.
-    fn locate(&self, uid: &str) -> Result<(ProjectId, PathBuf)> {
+    /// Finds and reads the task holding a UID. `<uid>.ics` is tried first;
+    /// file names are not guaranteed to match, so the fallback reads every file.
+    fn locate(&self, uid: &str) -> Result<(PathBuf, Task)> {
         let ids = self.project_ids()?;
         for id in &ids {
             let direct = self.project_dir(id).join(format!("{uid}.ics"));
-            if direct.is_file() && self.read_task(id, &direct).is_ok_and(|t| t.uid == uid) {
-                return Ok((id.clone(), direct));
+            if direct.is_file()
+                && let Ok(task) = self.read_task(id, &direct)
+                && task.uid == uid
+            {
+                return Ok((direct, task));
             }
         }
         for id in &ids {
             for path in self.ics_files(id)? {
-                if self.read_task(id, &path).is_ok_and(|t| t.uid == uid) {
-                    return Ok((id.clone(), path));
+                if let Ok(task) = self.read_task(id, &path)
+                    && task.uid == uid
+                {
+                    return Ok((path, task));
                 }
             }
         }
         bail!("no task with UID {uid}")
+    }
+
+    fn holds_uid(&self, id: &ProjectId, uid: &str) -> Result<bool> {
+        Ok(self
+            .ics_files(id)?
+            .iter()
+            .any(|path| self.read_task(id, path).is_ok_and(|t| t.uid == uid)))
     }
 }
 
@@ -125,8 +137,7 @@ impl Store for VdirStore {
     }
 
     fn get(&self, uid: &str) -> Result<Task> {
-        let (id, path) = self.locate(uid)?;
-        self.read_task(&id, &path)
+        self.locate(uid).map(|(_, task)| task)
     }
 
     fn create(&self, project: &ProjectId, task: NewTask) -> Result<Task> {
@@ -144,37 +155,46 @@ impl Store for VdirStore {
         vtodo::from_document(doc, project.clone())
     }
 
-    fn save(&self, task: &Task) -> Result<()> {
+    fn save(&self, task: &mut Task) -> Result<()> {
         let mut doc = vtodo::apply(task)?;
         if doc == task.raw {
             return Ok(());
         }
-        let (_, path) = self.locate(&task.uid)?;
-        let on_disk =
-            fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-        if on_disk != codec::serialize(&task.raw) {
+        let (path, current) = self.locate(&task.uid)?;
+        // Compared as parsed documents: the file may be laid out differently
+        // (fold width, line endings, trailing newline) and still say the same.
+        if current.raw != task.raw {
             bail!(
                 "task {} changed on disk since it was read; reload and retry",
                 task.uid
             );
         }
         vtodo::bump(&mut doc, (self.clock)())?;
-        write_atomic(&path, &codec::serialize(&doc))
+        write_atomic(&path, &codec::serialize(&doc))?;
+        task.raw = doc;
+        Ok(())
     }
 
     fn delete(&self, uid: &str) -> Result<()> {
-        let (_, path) = self.locate(uid)?;
+        let (path, _) = self.locate(uid)?;
         fs::remove_file(&path).with_context(|| format!("delete {}", path.display()))
     }
 
     fn move_to(&self, uid: &str, project: &ProjectId) -> Result<()> {
-        let (from, path) = self.locate(uid)?;
-        if &from == project {
+        let (path, task) = self.locate(uid)?;
+        if &task.project == project {
             return Ok(());
         }
         let dir = self.project_dir(project);
         if !dir.is_dir() {
             bail!("unknown project {}", project.as_str());
+        }
+        // vdirsyncer refuses to run when two files claim one UID.
+        if self.holds_uid(project, uid)? {
+            bail!(
+                "project {} already holds a task with UID {uid}",
+                project.as_str()
+            );
         }
         let target = dir.join(path.file_name().context("file without a name")?);
         if target.exists() {
