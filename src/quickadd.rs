@@ -23,10 +23,7 @@ pub fn parse(input: &str, now: DateTime<Local>) -> QuickAdd {
     let mut i = 0;
     while i < tokens.len() {
         let token = tokens[i];
-        if let Some(tag) = token
-            .strip_prefix('+')
-            .filter(|t| !t.is_empty() && parse_relative(t).is_none())
-        {
+        if let Some(tag) = token.strip_prefix('+').filter(|t| !t.is_empty()) {
             out.tags.push(tag.to_string());
             i += 1;
             continue;

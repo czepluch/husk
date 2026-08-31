@@ -8,7 +8,9 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::app::{App, Bucket, Mode, Pane, View, alarm_text, bucket, due_detail, due_label, stamp};
+use super::app::{
+    App, Bucket, InputKind, Mode, Pane, View, alarm_text, bucket, due_detail, due_label, stamp,
+};
 use crate::model::{Priority, Status, Task};
 use crate::theme::Theme;
 
@@ -24,16 +26,27 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     let [left, right] =
         Layout::horizontal([Constraint::Length(VIEWS_WIDTH), Constraint::Min(20)]).areas(main);
     draw_views(frame, app, theme, left);
-    let detail =
-        app.mode == Mode::Detail || (app.mode == Mode::Help && app.help_from == Mode::Detail);
-    if detail {
+    if showing_detail(app) {
         draw_detail(frame, app, theme, right);
     } else {
         draw_tasks(frame, app, theme, right);
     }
     draw_bar(frame, app, theme, bar);
-    if app.mode == Mode::Help {
-        draw_help(frame, theme, area);
+    match app.mode {
+        Mode::Help => draw_help(frame, theme, area),
+        Mode::Pick => draw_picker(frame, app, theme, area),
+        _ => {}
+    }
+}
+
+/// The detail stays on screen while a prompt, confirmation, picker or the
+/// help that was opened from it is showing.
+fn showing_detail(app: &App) -> bool {
+    match app.mode {
+        Mode::Detail => true,
+        Mode::Help => app.help_from == Mode::Detail,
+        Mode::Input | Mode::Confirm | Mode::Pick => app.return_to == Mode::Detail,
+        Mode::Normal | Mode::Filter => false,
     }
 }
 
@@ -412,35 +425,142 @@ fn draw_detail(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 }
 
 fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let status = sync_status(app);
+    let status_width =
+        u16::try_from(status.as_ref().map_or(0, |(t, _)| t.width() + 2)).unwrap_or(0);
+    let [left, right] =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(status_width)]).areas(area);
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
             Span::styled(" /", theme.help_key),
             Span::raw(app.filter.clone()),
             Span::styled("▌", theme.accent),
         ]),
+        Mode::Input => prompt_line(app, theme),
+        Mode::Confirm => Line::from(vec![
+            Span::raw(format!(
+                " Delete \"{}\"? ",
+                app.confirm
+                    .as_ref()
+                    .map_or("", |(_, summary)| summary.as_str())
+            )),
+            Span::styled("y", theme.help_key),
+            Span::raw("/"),
+            Span::styled("n", theme.help_key),
+        ]),
+        Mode::Pick => hints(
+            &[("j/k", "choose"), ("Enter", "move"), ("Esc", "cancel")],
+            theme,
+        ),
+        _ if app.message.is_some() => Line::from(vec![
+            Span::raw(" "),
+            Span::styled(app.message.clone().unwrap_or_default(), theme.accent),
+        ]),
         Mode::Detail => hints(
             &[
                 ("Esc", "back"),
                 ("j/k", "next/prev"),
                 ("J/K", "scroll"),
+                ("d", "done"),
+                ("e", "edit"),
+                ("n", "notes"),
                 ("?", "help"),
             ],
             theme,
         ),
         Mode::Normal | Mode::Help => hints(
             &[
-                ("j/k", "move"),
-                ("Tab", "pane"),
-                ("Enter", "detail"),
+                ("a", "add"),
+                ("d", "done"),
+                ("e", "edit"),
+                ("t", "due"),
+                ("p", "pri"),
+                ("m", "move"),
                 ("/", "filter"),
-                ("c", "done"),
+                ("s", "sync"),
                 ("?", "help"),
-                ("q", "quit"),
             ],
             theme,
         ),
     };
-    frame.render_widget(Paragraph::new(line).style(theme.status_bar), area);
+    frame.render_widget(Paragraph::new(line).style(theme.status_bar), left);
+    if let Some((text, failed)) = status {
+        let style = if failed {
+            theme.overdue
+        } else {
+            theme.status_bar
+        };
+        frame.render_widget(
+            Paragraph::new(Line::styled(format!(" {text} "), style)).right_aligned(),
+            right,
+        );
+    }
+}
+
+/// The sync summary for the bar's right end, and whether it is an error.
+fn sync_status(app: &App) -> Option<(String, bool)> {
+    if !app.sync_enabled() {
+        return None;
+    }
+    let state = app.sync_state();
+    if state.running {
+        return Some(("syncing…".to_string(), false));
+    }
+    if let Some(error) = state.last_error {
+        return Some((error, true));
+    }
+    state.last_ok.map(|at| {
+        (
+            format!("synced {}", at.format(&app.config.time_format)),
+            false,
+        )
+    })
+}
+
+fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
+    let Some(input) = &app.input else {
+        return Line::raw("");
+    };
+    let (prompt, hint) = match input.kind {
+        InputKind::QuickAdd => ("add", "  title due:tomorrow 09:00 pri:H +tag @project"),
+        InputKind::Summary => ("title", ""),
+        InputKind::Due => (
+            "due",
+            "  today | fri | +2d | 2026-09-03, optional HH:MM; empty clears",
+        ),
+        InputKind::Tags => ("tags", "  space separated"),
+    };
+    Line::from(vec![
+        Span::styled(format!(" {prompt}> "), theme.help_key),
+        Span::raw(input.buffer.clone()),
+        Span::styled("▌", theme.accent),
+        Span::styled(hint.to_string(), theme.muted),
+    ])
+}
+
+fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let width = 40.min(area.width.saturating_sub(2));
+    let height = u16::try_from(app.projects.len() + 2)
+        .unwrap_or(u16::MAX)
+        .min(area.height);
+    let popup = Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    let items: Vec<ListItem> = app
+        .projects
+        .iter()
+        .map(|p| ListItem::new(Line::styled(format!(" {} ", p.name), theme.project)))
+        .collect();
+    frame.render_widget(Clear, popup);
+    let list = List::new(items)
+        .style(theme.base)
+        .block(block(theme, " Move to ", true))
+        .highlight_style(theme.selected);
+    let mut state = ListState::default().with_selected(Some(app.pick_index));
+    frame.render_stateful_widget(list, popup, &mut state);
 }
 
 fn hints(pairs: &[(&str, &str)], theme: &Theme) -> Line<'static> {
@@ -454,14 +574,20 @@ fn hints(pairs: &[(&str, &str)], theme: &Theme) -> Line<'static> {
 
 fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
     let rows = [
-        ("j / k", "move (arrows work too)"),
-        ("g / G", "first / last"),
+        ("j / k", "move (arrows work too), g / G first / last"),
         ("Tab", "switch pane"),
         ("Enter", "open the task, or focus the task list"),
-        ("J / K", "scroll the open task (PgUp / PgDn too)"),
+        ("J / K", "scroll the open task"),
+        ("a", "add: title due:fri 09:00 pri:H +tag @project"),
+        ("d", "done / reopen (recurring tasks: on the phone)"),
+        ("x", "delete, after confirming"),
+        ("u", "undo the last change"),
+        ("e / t", "edit the title / the due date"),
+        ("p / T", "cycle priority / edit tags"),
+        ("m / n", "move to a project / edit notes in $EDITOR"),
         ("/", "filter by text; Enter keeps it, Esc clears it"),
         ("c", "show or hide completed tasks"),
-        ("Esc", "back, or clear the filter"),
+        ("s", "sync now"),
         ("?", "this help"),
         ("q", "quit"),
     ];

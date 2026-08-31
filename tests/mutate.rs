@@ -1,0 +1,499 @@
+mod common;
+
+use std::fs;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use chrono::{DateTime, Local, TimeZone};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use husk::config::Config;
+use husk::store::VdirStore;
+use husk::theme::Theme;
+use husk::ui::app::{App, Mode};
+use husk::ui::{self, views};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+
+const TEST_TASK: &str = "BD215969-28EE-4474-A2E4-61575C3C49E7";
+const WERKLY: &str = "9ED04B97-EAF7-4BE1-AEFF-48DA2F322B71";
+
+fn now() -> DateTime<Local> {
+    Local
+        .with_ymd_and_hms(2026, 8, 31, 12, 0, 0)
+        .single()
+        .unwrap()
+}
+
+struct Sample {
+    dir: common::TempDir,
+    app: App,
+}
+
+fn sample_with(config: impl FnOnce(&mut Config)) -> Sample {
+    let dir = common::fixture_vdir();
+    let mut cfg = Config {
+        vdir: dir.path().to_path_buf(),
+        sync_command: vec![],
+        ..Config::default()
+    };
+    config(&mut cfg);
+    let app = App::new(cfg, Box::new(VdirStore::new(dir.path())), now()).unwrap();
+    Sample { dir, app }
+}
+
+fn sample() -> Sample {
+    sample_with(|_| {})
+}
+
+fn key(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+}
+
+fn code(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+fn type_text(app: &mut App, text: &str) {
+    for c in text.chars() {
+        app.handle_key(key(c));
+    }
+}
+
+fn clear_input(app: &mut App) {
+    for _ in 0..80 {
+        app.handle_key(code(KeyCode::Backspace));
+    }
+}
+
+fn file(s: &Sample, rel: &str) -> String {
+    fs::read_to_string(s.dir.path().join(rel)).unwrap()
+}
+
+fn find_file(s: &Sample, project: &str, needle: &str) -> Option<String> {
+    fs::read_dir(s.dir.path().join(project))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| fs::read_to_string(e.path()).unwrap_or_default())
+        .find(|text| text.contains(needle))
+}
+
+/// Moves the cursor onto a task in the All view.
+fn select(app: &mut App, uid: &str) {
+    app.view_index = 2;
+    app.handle_key(key('g'));
+    for _ in 0..50 {
+        if app.selected_task().is_some_and(|t| t.uid == uid) {
+            return;
+        }
+        app.handle_key(key('j'));
+    }
+    panic!("no visible task {uid}");
+}
+
+fn screen(terminal: &Terminal<TestBackend>) -> String {
+    let buffer = terminal.backend().buffer();
+    let area = buffer.area;
+    (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buffer.cell((x, y)).map_or(" ", |c| c.symbol()))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render(app: &App) -> String {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
+    screen(&terminal)
+}
+
+#[test]
+fn d_completes_with_the_apple_triple_and_u_reopens() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('d'));
+    let text = file(&s, "life/no-due.ics");
+    for line in [
+        "STATUS:COMPLETED\n",
+        "PERCENT-COMPLETE:100\n",
+        "COMPLETED:20260831T",
+        "SEQUENCE:1\n",
+    ] {
+        assert!(text.contains(line), "{line:?} missing in\n{text}");
+    }
+    assert_eq!(s.app.message.as_deref(), Some("Done: Test task"));
+    assert!(
+        !s.app.visible_tasks().iter().any(|t| t.uid == TEST_TASK),
+        "done tasks leave the list"
+    );
+
+    s.app.handle_key(key('u'));
+    let text = file(&s, "life/no-due.ics");
+    assert!(!text.contains("COMPLETED"), "{text}");
+    assert!(
+        text.contains("SEQUENCE:2\n"),
+        "restore outranks the completed file:\n{text}"
+    );
+    assert_eq!(s.app.message.as_deref(), Some("Restored: Test task"));
+    assert_eq!(s.app.selected_task().unwrap().uid, TEST_TASK);
+
+    s.app.handle_key(key('d'));
+    s.app.handle_key(key('c'));
+    select(&mut s.app, TEST_TASK);
+    assert!(s.app.selected_task().unwrap().is_done());
+    s.app.handle_key(key('d'));
+    assert_eq!(s.app.message.as_deref(), Some("Reopened: Test task"));
+    let text = file(&s, "life/no-due.ics");
+    assert!(
+        text.contains("STATUS:NEEDS-ACTION\n") && !text.contains("PERCENT"),
+        "{text}"
+    );
+}
+
+#[test]
+fn d_refuses_recurring_tasks() {
+    let mut s = sample();
+    let before = file(&s, "life/recurring-weekly-until.ics");
+    select(&mut s.app, WERKLY);
+    s.app.handle_key(key('d'));
+    assert!(
+        s.app.message.as_deref().unwrap().contains("phone"),
+        "{:?}",
+        s.app.message
+    );
+    assert_eq!(file(&s, "life/recurring-weekly-until.ics"), before);
+}
+
+#[test]
+fn x_confirms_deletes_and_u_restores() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('x'));
+    assert_eq!(s.app.mode, Mode::Confirm);
+    assert!(render(&s.app).contains("Delete \"Test task\"?"));
+    s.app.handle_key(key('n'));
+    assert_eq!(s.app.mode, Mode::Normal);
+    assert!(s.dir.path().join("life/no-due.ics").exists());
+
+    s.app.handle_key(key('x'));
+    s.app.handle_key(key('y'));
+    assert!(!s.dir.path().join("life/no-due.ics").exists());
+    assert_eq!(s.app.message.as_deref(), Some("Deleted: Test task"));
+    assert!(!s.app.tasks.iter().any(|t| t.uid == TEST_TASK));
+
+    s.app.handle_key(key('u'));
+    let restored = s.dir.path().join(format!("life/{TEST_TASK}.ics"));
+    assert!(restored.exists());
+    assert!(
+        fs::read_to_string(restored)
+            .unwrap()
+            .contains("SUMMARY:Test task\n")
+    );
+    assert_eq!(s.app.selected_task().unwrap().uid, TEST_TASK);
+
+    s.app.handle_key(key('u'));
+    s.app.handle_key(key('u'));
+    assert_eq!(s.app.message.as_deref(), Some("Nothing to undo"));
+}
+
+#[test]
+fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
+    let mut s = sample();
+    s.app.view_index = 4;
+    assert_eq!(s.app.view_name(&s.app.view()), "Life");
+    s.app.handle_key(key('a'));
+    assert_eq!(s.app.mode, Mode::Input);
+    assert!(render(&s.app).contains("add> "));
+    type_text(&mut s.app, "Call bank due:tomorrow 09:00 +money pri:h");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.message.as_deref(), Some("Added: Call bank"));
+    let text = find_file(&s, "life", "SUMMARY:Call bank").expect("created in life");
+    let due = Local
+        .with_ymd_and_hms(2026, 9, 1, 9, 0, 0)
+        .single()
+        .unwrap()
+        .to_utc()
+        .format("DUE:%Y%m%dT%H%M%SZ")
+        .to_string();
+    for line in [
+        due.as_str(),
+        "CATEGORIES:money",
+        "PRIORITY:1",
+        "TRIGGER:-P1D",
+        "TRIGGER:-PT1H",
+        "TRIGGER:PT0S",
+    ] {
+        assert!(text.contains(line), "{line} missing in\n{text}");
+    }
+    assert_eq!(text.matches("BEGIN:VALARM").count(), 3);
+    assert_eq!(s.app.selected_task().unwrap().summary, "Call bank");
+
+    s.app.handle_key(key('u'));
+    assert!(find_file(&s, "life", "SUMMARY:Call bank").is_none());
+    assert_eq!(s.app.message.as_deref(), Some("Removed the added task"));
+}
+
+#[test]
+fn a_needs_a_project_and_honours_overrides() {
+    let mut s = sample();
+    s.app.view_index = 0;
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "No home");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(
+        s.app
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("default_project"),
+        "{:?}",
+        s.app.message
+    );
+    assert!(find_file(&s, "life", "No home").is_none());
+
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "With override @argot");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(find_file(&s, "argot", "SUMMARY:With override").is_some());
+    let text = find_file(&s, "argot", "SUMMARY:With override").unwrap();
+    assert!(!text.contains("VALARM"), "no due, no alarm:\n{text}");
+
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "Nowhere @nosuch");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(s.app.message.as_deref().unwrap().contains("nosuch"));
+
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "   ");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(s.app.message.as_deref().unwrap().contains("title"));
+
+    let mut d = sample_with(|c| c.default_project = Some("Life".to_string()));
+    d.app.handle_key(key('a'));
+    type_text(&mut d.app, "By default");
+    d.app.handle_key(code(KeyCode::Enter));
+    assert!(
+        find_file(&d, "life", "SUMMARY:By default").is_some(),
+        "display name resolves"
+    );
+}
+
+#[test]
+fn e_t_p_and_upper_t_edit_the_selected_task() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+
+    s.app.handle_key(key('e'));
+    assert_eq!(s.app.input.as_ref().unwrap().buffer, "Test task");
+    for _ in 0..4 {
+        s.app.handle_key(code(KeyCode::Backspace));
+    }
+    type_text(&mut s.app, "thing");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(file(&s, "life/no-due.ics").contains("SUMMARY:Test thing\n"));
+    assert_eq!(
+        s.app.selected_task().unwrap().uid,
+        TEST_TASK,
+        "stays selected"
+    );
+
+    s.app.handle_key(key('t'));
+    assert_eq!(s.app.input.as_ref().unwrap().buffer, "");
+    assert!(render(&s.app).contains("due> "));
+    type_text(&mut s.app, "fri 10:00");
+    s.app.handle_key(code(KeyCode::Enter));
+    let text = file(&s, "life/no-due.ics");
+    let due = Local
+        .with_ymd_and_hms(2026, 9, 4, 10, 0, 0)
+        .single()
+        .unwrap()
+        .to_utc()
+        .format("DUE:%Y%m%dT%H%M%SZ\n")
+        .to_string();
+    assert!(text.contains(&due), "{text}");
+    assert_eq!(
+        text.matches("BEGIN:VALARM").count(),
+        3,
+        "alarms added with a timed due:\n{text}"
+    );
+
+    s.app.handle_key(key('t'));
+    assert_eq!(s.app.input.as_ref().unwrap().buffer, "2026-09-04 10:00");
+    s.app.handle_key(code(KeyCode::Esc));
+    assert_eq!(s.app.mode, Mode::Normal);
+    assert!(
+        file(&s, "life/no-due.ics").contains(&due),
+        "Esc changes nothing"
+    );
+
+    s.app.handle_key(key('t'));
+    clear_input(&mut s.app);
+    type_text(&mut s.app, "someday");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(
+        s.app
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("could not read a date")
+    );
+
+    s.app.handle_key(key('t'));
+    clear_input(&mut s.app);
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(
+        !file(&s, "life/no-due.ics").contains("\nDUE"),
+        "empty clears the due date"
+    );
+
+    for expected in ["PRIORITY:1\n", "PRIORITY:5\n", "PRIORITY:9\n"] {
+        s.app.handle_key(key('p'));
+        assert!(file(&s, "life/no-due.ics").contains(expected), "{expected}");
+    }
+    s.app.handle_key(key('p'));
+    assert!(!file(&s, "life/no-due.ics").contains("PRIORITY"));
+
+    s.app.handle_key(key('T'));
+    type_text(&mut s.app, "home #garden home");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(file(&s, "life/no-due.ics").contains("CATEGORIES:home,garden\n"));
+    s.app.handle_key(key('T'));
+    assert_eq!(s.app.input.as_ref().unwrap().buffer, "home garden");
+    clear_input(&mut s.app);
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(!file(&s, "life/no-due.ics").contains("CATEGORIES"));
+}
+
+#[test]
+fn m_moves_through_the_picker_and_u_moves_back() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('m'));
+    assert_eq!(s.app.mode, Mode::Pick);
+    assert_eq!(s.app.pick_index, 1, "starts on the task's own project");
+    assert!(render(&s.app).contains("Move to"));
+    s.app.handle_key(key('k'));
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.message.as_deref(), Some("Moved to Argot"));
+    assert!(s.dir.path().join("argot/no-due.ics").exists());
+    assert!(!s.dir.path().join("life/no-due.ics").exists());
+    assert_eq!(s.app.selected_task().unwrap().project.as_str(), "argot");
+
+    s.app.handle_key(key('u'));
+    assert!(!s.dir.path().join("argot/no-due.ics").exists());
+    assert!(s.dir.path().join(format!("life/{TEST_TASK}.ics")).exists());
+    assert_eq!(s.app.selected_task().unwrap().project.as_str(), "life");
+}
+
+#[test]
+fn notes_go_through_the_editor_request_and_apply_notes() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    assert_eq!(s.app.take_editor_request(), None);
+    s.app.handle_key(key('n'));
+    assert_eq!(
+        s.app.take_editor_request(),
+        Some((TEST_TASK.to_string(), String::new()))
+    );
+    assert_eq!(s.app.take_editor_request(), None, "taken once");
+
+    s.app.apply_notes(TEST_TASK, "line one\nline two\n\n");
+    assert_eq!(s.app.message.as_deref(), Some("Notes saved: Test task"));
+    assert!(file(&s, "life/no-due.ics").contains("DESCRIPTION:line one\\nline two\n"));
+    s.app.handle_key(key('n'));
+    assert_eq!(
+        s.app.take_editor_request().unwrap().1,
+        "line one\nline two",
+        "the editor starts from the current notes"
+    );
+    s.app.apply_notes(TEST_TASK, "");
+    assert!(!file(&s, "life/no-due.ics").contains("DESCRIPTION"));
+}
+
+#[test]
+fn edit_with_runs_the_editor_on_a_temp_file() {
+    let dir = common::TempDir::new();
+    let script = dir.path().join("editor.sh");
+    fs::write(
+        &script,
+        "#!/bin/sh\nfor last; do :; done\nprintf 'from script\\n' >> \"$last\"\n",
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&script).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    fs::set_permissions(&script, perms).unwrap();
+    let editor = format!("{} --flag", script.display());
+    assert_eq!(
+        ui::edit_with(&editor, "start\n").unwrap(),
+        "start\nfrom script\n"
+    );
+
+    let failing = dir.path().join("fail.sh");
+    fs::write(&failing, "#!/bin/sh\nexit 2\n").unwrap();
+    let mut perms = fs::metadata(&failing).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    fs::set_permissions(&failing, perms).unwrap();
+    let err = ui::edit_with(&failing.display().to_string(), "x").unwrap_err();
+    assert!(err.to_string().contains("exited"), "{err}");
+}
+
+#[test]
+fn writes_trigger_a_sync_and_a_finished_run_reloads() {
+    let mut s = sample_with(|c| {
+        c.sync_command = vec!["sh".to_string(), "-c".to_string(), "true".to_string()];
+    });
+    assert!(s.app.sync_enabled());
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('d'));
+    let start = Instant::now();
+    while s.app.sync_state().runs == 0 && start.elapsed() < Duration::from_secs(8) {
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(s.app.sync_state().runs, 1, "a write asked for a sync");
+
+    let path = s.dir.path().join("life/all-day.ics");
+    let edited = fs::read_to_string(&path)
+        .unwrap()
+        .replace("SUMMARY:Have fun", "SUMMARY:Edited on the phone");
+    fs::write(&path, edited).unwrap();
+    s.app.poll_sync();
+    assert!(
+        s.app
+            .tasks
+            .iter()
+            .any(|t| t.summary == "Edited on the phone"),
+        "reloaded after the run"
+    );
+    assert!(render(&s.app).contains("synced "), "{}", render(&s.app));
+
+    s.app.handle_key(key('s'));
+    assert_eq!(s.app.message.as_deref(), Some("Sync requested"));
+
+    let mut off = sample();
+    off.app.handle_key(key('s'));
+    assert!(off.app.message.as_deref().unwrap().contains("off"));
+}
+
+#[test]
+fn actions_work_from_the_detail_view_and_return_to_it() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Detail);
+    s.app.handle_key(key('e'));
+    assert_eq!(s.app.mode, Mode::Input);
+    assert!(
+        render(&s.app).contains("Summary"),
+        "detail stays behind the prompt"
+    );
+    type_text(&mut s.app, "!");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Detail);
+    assert!(file(&s, "life/no-due.ics").contains("SUMMARY:Test task!\n"));
+    s.app.handle_key(key('x'));
+    s.app.handle_key(code(KeyCode::Esc));
+    assert_eq!(s.app.mode, Mode::Detail);
+}

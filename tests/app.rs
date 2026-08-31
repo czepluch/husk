@@ -2,9 +2,13 @@ mod common;
 
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::fs;
+
 use husk::config::Config;
+use husk::ical::codec;
 use husk::ical::vtodo;
-use husk::model::{Due, Project, ProjectId, Task};
+use husk::model::{Due, ProjectId, Task};
+use husk::store::VdirStore;
 use husk::theme::Theme;
 use husk::ui::app::{self, App, Bucket, Mode, Pane, View};
 use husk::ui::views;
@@ -41,19 +45,38 @@ fn task(uid: &str, summary: &str, project: &str, due: Option<&str>, extra: &str)
     vtodo::parse_task(&text, ProjectId::new(project)).unwrap()
 }
 
-fn sample() -> App {
-    let projects = vec![
-        Project {
-            id: ProjectId::new("life"),
-            name: "Life".to_string(),
-            color: None,
-        },
-        Project {
-            id: ProjectId::new("argot"),
-            name: "Argot".to_string(),
-            color: None,
-        },
-    ];
+struct Sample {
+    _dir: common::TempDir,
+    app: App,
+}
+
+/// An app over a temp vdir holding the given projects and tasks; projects a
+/// task refers to without being listed get a directory with no display name.
+fn make(projects: &[(&str, &str)], tasks: Vec<Task>) -> Sample {
+    let dir = common::TempDir::new();
+    for (id, name) in projects {
+        fs::create_dir_all(dir.path().join(id)).unwrap();
+        fs::write(dir.path().join(id).join("displayname"), name).unwrap();
+    }
+    for t in &tasks {
+        let project = dir.path().join(t.project.as_str());
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join(format!("{}.ics", t.uid)),
+            codec::serialize(t.raw()),
+        )
+        .unwrap();
+    }
+    let config = Config {
+        vdir: dir.path().to_path_buf(),
+        sync_command: vec![],
+        ..Config::default()
+    };
+    let app = App::new(config, Box::new(VdirStore::new(dir.path())), now()).unwrap();
+    Sample { _dir: dir, app }
+}
+
+fn sample() -> Sample {
     let tasks = vec![
         task(
             "later",
@@ -106,7 +129,7 @@ fn sample() -> App {
             "STATUS:COMPLETED\r\nCOMPLETED:20260831T101451Z\r\n",
         ),
     ];
-    App::new(Config::default(), projects, tasks, now())
+    make(&[("life", "Life"), ("argot", "Argot")], tasks)
 }
 
 fn uids(app: &App) -> Vec<&str> {
@@ -177,10 +200,11 @@ fn buckets_follow_the_local_calendar() {
 
 #[test]
 fn views_select_by_bucket_hide_done_and_sort_overdue_first() {
-    let mut app = sample();
+    let mut s = sample();
+    let app = &mut s.app;
     assert_eq!(app.view(), View::Today);
     assert_eq!(
-        uids(&app),
+        uids(app),
         vec!["overdue-day", "today-early", "today-all-day", "today-later"]
     );
     assert_eq!(app.due_count(), 4);
@@ -188,7 +212,7 @@ fn views_select_by_bucket_hide_done_and_sort_overdue_first() {
     app.view_index = 1;
     assert_eq!(app.view(), View::Upcoming);
     assert_eq!(
-        uids(&app),
+        uids(app),
         vec![
             "overdue-day",
             "today-early",
@@ -200,7 +224,7 @@ fn views_select_by_bucket_hide_done_and_sort_overdue_first() {
 
     app.view_index = 2;
     assert_eq!(
-        uids(&app),
+        uids(app),
         vec![
             "overdue-day",
             "today-early",
@@ -212,9 +236,9 @@ fn views_select_by_bucket_hide_done_and_sort_overdue_first() {
         ]
     );
 
-    app.view_index = 4;
+    app.view_index = 3;
     assert_eq!(app.view(), View::Project(ProjectId::new("argot")));
-    assert_eq!(uids(&app), vec!["overdue-day", "soon"]);
+    assert_eq!(uids(app), vec!["overdue-day", "soon"]);
 
     assert_eq!(app.count(&View::Today), 4);
     assert_eq!(app.count(&View::All), 7, "done tasks are hidden");
@@ -260,10 +284,11 @@ fn priority_then_creation_break_ties_on_equal_due() {
             "PRIORITY:5\r\nCREATED:20260803T000000Z\r\n",
         ),
     ];
-    let mut app = App::new(Config::default(), vec![], tasks, now());
+    let mut s = make(&[], tasks);
+    let app = &mut s.app;
     app.view_index = 2;
     assert_eq!(
-        uids(&app),
+        uids(app),
         vec!["high", "medium-older", "medium-newer", "low", "none"]
     );
 }
@@ -310,22 +335,24 @@ fn due_labels_are_short_and_relative() {
 
 #[test]
 fn filter_matches_summary_tags_and_project_case_insensitively() {
-    let mut app = sample();
+    let mut s = sample();
+    let app = &mut s.app;
     app.view_index = 2;
     app.filter = "GUSTAV".to_string();
-    assert_eq!(uids(&app), vec!["today-later"]);
+    assert_eq!(uids(app), vec!["today-later"]);
     app.filter = "#health".to_string();
-    assert_eq!(uids(&app), vec!["today-early"]);
+    assert_eq!(uids(app), vec!["today-early"]);
     app.filter = "argot".to_string();
-    assert_eq!(uids(&app), vec!["overdue-day", "soon"]);
+    assert_eq!(uids(app), vec!["overdue-day", "soon"]);
     app.filter = "nothing here".to_string();
-    assert!(uids(&app).is_empty());
+    assert!(uids(app).is_empty());
     assert_eq!(app.selected_task(), None);
 }
 
 #[test]
 fn keys_drive_navigation_filter_and_modes() {
-    let mut app = sample();
+    let mut s = sample();
+    let app = &mut s.app;
     assert_eq!(app.pane, Pane::Tasks);
     app.handle_key(key('j'));
     assert_eq!(app.task_index(), 1);
@@ -358,7 +385,7 @@ fn keys_drive_navigation_filter_and_modes() {
         app.handle_key(key(c));
     }
     assert_eq!(app.filter, "oil");
-    assert_eq!(uids(&app), vec!["soon"]);
+    assert_eq!(uids(app), vec!["soon"]);
     app.handle_key(code(KeyCode::Backspace));
     assert_eq!(app.filter, "oi");
     app.handle_key(code(KeyCode::Enter));
@@ -375,7 +402,8 @@ fn keys_drive_navigation_filter_and_modes() {
     app.handle_key(key('q'));
     assert!(app.quit);
 
-    let mut app = sample();
+    let mut s = sample();
+    let app = &mut s.app;
     app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     assert!(app.quit);
 }
@@ -383,10 +411,11 @@ fn keys_drive_navigation_filter_and_modes() {
 #[test]
 fn frames_render_the_layout_the_detail_and_the_help() {
     let theme = Theme::load("phosphor", None).unwrap();
-    let mut app = sample();
+    let mut s = sample();
+    let app = &mut s.app;
     let mut terminal = Terminal::new(TestBackend::new(90, 20)).unwrap();
 
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     for expected in [
         "Projects",
@@ -402,8 +431,8 @@ fn frames_render_the_layout_the_detail_and_the_help() {
         "◂ Sun",
         "!!  Have fun",
         "4 due",
-        "j/k",
-        "quit",
+        "a add",
+        "? help",
     ] {
         assert!(text.contains(expected), "missing {expected:?} in\n{text}");
     }
@@ -414,7 +443,7 @@ fn frames_render_the_layout_the_detail_and_the_help() {
     );
 
     app.handle_key(key('c'));
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     assert!(
         text.lines()
@@ -423,11 +452,11 @@ fn frames_render_the_layout_the_detail_and_the_help() {
 {text}"
     );
     assert!(text.contains("Today +done"), "{text}");
-    assert_eq!(uids(&app).last(), Some(&"done"), "done tasks sort last");
+    assert_eq!(uids(app).last(), Some(&"done"), "done tasks sort last");
     app.handle_key(key('c'));
 
     app.handle_key(code(KeyCode::Enter));
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     for expected in [
         "Task",
@@ -445,7 +474,7 @@ fn frames_render_the_layout_the_detail_and_the_help() {
 
     app.handle_key(code(KeyCode::Esc));
     app.handle_key(key('?'));
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     for expected in ["Help", "switch pane", "filter by text", "quit"] {
         assert!(text.contains(expected), "missing {expected:?} in\n{text}");
@@ -453,13 +482,13 @@ fn frames_render_the_layout_the_detail_and_the_help() {
 
     app.handle_key(code(KeyCode::Esc));
     app.filter = "nothing".to_string();
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     assert!(screen(&terminal).contains("No tasks"));
 
     let ansi = Theme::load("ansi", None).unwrap();
     for (w, h) in [(20, 5), (5, 3), (200, 60)] {
         let mut small = Terminal::new(TestBackend::new(w, h)).unwrap();
-        small.draw(|f| views::draw(f, &app, &ansi)).unwrap();
+        small.draw(|f| views::draw(f, app, &ansi)).unwrap();
     }
 }
 
@@ -475,9 +504,10 @@ fn long_summaries_wrap_under_the_summary_column() {
         Some("DUE;VALUE=DATE:20260831"),
         "CATEGORIES:tag\r\n",
     )];
-    let app = App::new(Config::default(), vec![], tasks, now());
+    let s = make(&[], tasks);
+    let app = &s.app;
     let mut terminal = Terminal::new(TestBackend::new(70, 12)).unwrap();
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     let column = |line: &str, needle: &str| line.find(needle).map(|i| line[..i].chars().count());
     let first = text
@@ -509,10 +539,11 @@ fn priority_is_shown_as_title_weight() {
         task("low", "Low one", "p", None, "PRIORITY:9\r\n"),
         task("none", "Plain one", "p", None, ""),
     ];
-    let mut app = App::new(Config::default(), vec![], tasks, now());
+    let mut s = make(&[], tasks);
+    let app = &mut s.app;
     app.view_index = 2;
     let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let buffer = terminal.backend().buffer();
     let text = screen(&terminal);
     let modifier_at = |needle: &str| {
@@ -536,7 +567,8 @@ fn priority_is_shown_as_title_weight() {
 
 #[test]
 fn selection_follows_the_task_when_time_reorders_the_list() {
-    let mut app = sample();
+    let mut s = sample();
+    let app = &mut s.app;
     app.handle_key(key('j'));
     app.handle_key(key('j'));
     assert_eq!(app.selected_task().unwrap().uid, "today-all-day");
@@ -548,7 +580,7 @@ fn selection_follows_the_task_when_time_reorders_the_list() {
         .single()
         .unwrap();
     assert_eq!(
-        uids(&app),
+        uids(app),
         vec!["overdue-day", "today-early", "today-later", "today-all-day"]
     );
     assert_eq!(app.selected_task().unwrap().uid, "today-all-day");
@@ -561,7 +593,8 @@ fn selection_follows_the_task_when_time_reorders_the_list() {
 
 #[test]
 fn completed_tasks_qualify_for_today_and_upcoming_by_completion_time() {
-    let mut app = sample();
+    let mut s = sample();
+    let app = &mut s.app;
     app.tasks.push(task(
         "done-old",
         "Done ten days ago",
@@ -578,29 +611,30 @@ fn completed_tasks_qualify_for_today_and_upcoming_by_completion_time() {
     ));
     app.show_done = true;
     assert_eq!(
-        uids(&app).last(),
+        uids(app).last(),
         Some(&"done"),
         "completed today shows in Today"
     );
-    assert!(!uids(&app).contains(&"done-old"));
-    assert!(!uids(&app).contains(&"done-when"));
+    assert!(!uids(app).contains(&"done-old"));
+    assert!(!uids(app).contains(&"done-when"));
 
     app.view_index = 1;
-    assert!(uids(&app).contains(&"done"));
+    assert!(uids(app).contains(&"done"));
     assert!(
-        !uids(&app).contains(&"done-old"),
+        !uids(app).contains(&"done-old"),
         "ten days ago is outside Upcoming"
     );
 
     app.view_index = 2;
-    let all = uids(&app);
+    let all = uids(app);
     assert!(all.contains(&"done") && all.contains(&"done-old") && all.contains(&"done-when"));
     assert_eq!(app.count(&View::All), 7, "counts stay pending-only");
 }
 
 #[test]
 fn filter_ignores_keys_with_control_or_alt() {
-    let mut app = sample();
+    let mut s = sample();
+    let app = &mut s.app;
     app.handle_key(key('/'));
     app.handle_key(key('b'));
     app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
@@ -622,10 +656,11 @@ fn due_column_grows_for_wide_labels() {
         ),
         task("near", "Short", "p", Some("DUE;VALUE=DATE:20260831"), ""),
     ];
-    let mut app = App::new(Config::default(), vec![], tasks, now());
+    let mut s = make(&[], tasks);
+    let app = &mut s.app;
     app.view_index = 2;
     let mut terminal = Terminal::new(TestBackend::new(70, 8)).unwrap();
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     let far = text
         .lines()
@@ -650,10 +685,11 @@ fn tall_rows_are_capped_and_long_words_break() {
         task("after", "After the tall one", "p", None, ""),
         task("url", url, "p", None, ""),
     ];
-    let mut app = App::new(Config::default(), vec![], tasks, now());
+    let mut s = make(&[], tasks);
+    let app = &mut s.app;
     app.view_index = 2;
     let mut terminal = Terminal::new(TestBackend::new(50, 12)).unwrap();
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     assert!(
         text.contains("…"),
@@ -673,7 +709,7 @@ fn tall_rows_are_capped_and_long_words_break() {
     );
 
     let mut wide = Terminal::new(TestBackend::new(90, 12)).unwrap();
-    wide.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    wide.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&wide);
     assert!(
         text.contains("anywhere"),
@@ -695,14 +731,15 @@ fn detail_scrolls_and_help_returns_to_it() {
         Some("DUE;VALUE=DATE:20260831"),
         &extra,
     )];
-    let mut app = App::new(Config::default(), vec![], tasks, now());
+    let mut s = make(&[], tasks);
+    let app = &mut s.app;
     app.view_index = 2;
     app.show_done = true;
     let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
 
     app.handle_key(code(KeyCode::Enter));
     assert_eq!(app.mode, Mode::Detail);
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     assert!(text.contains("Start"), "{text}");
     assert!(text.contains("Completed"), "{text}");
@@ -712,7 +749,7 @@ fn detail_scrolls_and_help_returns_to_it() {
         app.handle_key(key('J'));
     }
     assert_eq!(app.detail_scroll, 15);
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     assert!(
         !text.contains("Summary"),
@@ -724,7 +761,7 @@ fn detail_scrolls_and_help_returns_to_it() {
 
     app.handle_key(key('?'));
     assert_eq!(app.mode, Mode::Help);
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     app.handle_key(code(KeyCode::Esc));
     assert_eq!(app.mode, Mode::Detail, "help returns where it came from");
     app.handle_key(code(KeyCode::Esc));
@@ -734,15 +771,11 @@ fn detail_scrolls_and_help_returns_to_it() {
 #[test]
 fn long_project_names_are_cut_with_the_count_kept() {
     let theme = Theme::load("phosphor", None).unwrap();
-    let projects = vec![Project {
-        id: ProjectId::new("house"),
-        name: "Indkøb og husholdning i lejligheden".to_string(),
-        color: None,
-    }];
     let tasks = vec![task("t", "t", "house", None, "")];
-    let app = App::new(Config::default(), projects, tasks, now());
+    let s = make(&[("house", "Indkøb og husholdning i lejligheden")], tasks);
+    let app = &s.app;
     let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     let row = text.lines().find(|l| l.contains("Indkøb")).unwrap();
     assert!(row.contains("…"), "{text}");
@@ -755,18 +788,19 @@ fn long_project_names_are_cut_with_the_count_kept() {
 #[test]
 fn small_terminals_render_content_in_every_mode() {
     let theme = Theme::load("phosphor", None).unwrap();
-    let mut app = sample();
+    let mut s = sample();
+    let app = &mut s.app;
     app.view_index = 2;
     for (w, h) in [(20, 5), (30, 8), (50, 12), (5, 3)] {
         for mode in [Mode::Normal, Mode::Detail, Mode::Help] {
             app.mode = mode;
             let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-            terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+            terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
         }
     }
     app.mode = Mode::Normal;
     let mut terminal = Terminal::new(TestBackend::new(50, 12)).unwrap();
-    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     assert!(text.contains("Pay"), "{text}");
 }
