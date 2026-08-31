@@ -95,3 +95,14 @@ pub fn fixture_vdir() -> TempDir {
     }
     dir
 }
+
+/// How many tasks `fixture_vdir` puts into `life` and `argot`.
+pub fn vdir_task_counts() -> (usize, usize) {
+    let all = fixtures();
+    let argot = all
+        .iter()
+        .filter(|(rel, _)| rel.starts_with("tasksorg"))
+        .count();
+    let life = all.len() - argot - 1;
+    (life, argot)
+}

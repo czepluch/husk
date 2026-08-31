@@ -59,15 +59,16 @@ fn projects_come_from_directory_names_and_metadata_files() {
 fn tasks_lists_all_projects_or_one() {
     let dir = common::fixture_vdir();
     let store = store(&dir);
+    let (life_n, argot_n) = common::vdir_task_counts();
     let all = store.tasks(None).unwrap();
-    assert_eq!(all.len(), 12);
+    assert_eq!(all.len(), life_n + argot_n);
     assert!(
         all.iter()
             .all(|t| t.project == life() || t.project == argot())
     );
 
-    assert_eq!(store.tasks(Some(&life())).unwrap().len(), 8);
-    assert_eq!(store.tasks(Some(&argot())).unwrap().len(), 4);
+    assert_eq!(store.tasks(Some(&life())).unwrap().len(), life_n);
+    assert_eq!(store.tasks(Some(&argot())).unwrap().len(), argot_n);
     assert_eq!(
         store
             .tasks(Some(&ProjectId::new("solidity")))
@@ -84,7 +85,10 @@ fn unparsable_and_foreign_files_are_skipped() {
     fs::write(dir.path().join("life/garbage.ics"), "not a calendar\n").unwrap();
     fs::write(dir.path().join("life/notes.txt"), "BEGIN:VCALENDAR").unwrap();
     fs::write(dir.path().join("life/leftover.ics.tmp"), "BEGIN:VCALENDAR").unwrap();
-    assert_eq!(store(&dir).tasks(Some(&life())).unwrap().len(), 8);
+    assert_eq!(
+        store(&dir).tasks(Some(&life())).unwrap().len(),
+        common::vdir_task_counts().0
+    );
 }
 
 #[test]
@@ -118,7 +122,10 @@ fn create_writes_a_uid_named_file_and_returns_the_task() {
     let text = fs::read_to_string(&path).unwrap();
     assert!(text.contains("SUMMARY:Created here\r\n"), "{text}");
     assert!(text.contains("DUE:20260831T140000Z\r\n"), "{text}");
-    assert_eq!(store.tasks(Some(&life())).unwrap().len(), 9);
+    assert_eq!(
+        store.tasks(Some(&life())).unwrap().len(),
+        common::vdir_task_counts().0 + 1
+    );
     assert_eq!(store.get(&task.uid).unwrap(), task);
     assert!(tmp_files(&dir).is_empty());
 
@@ -252,7 +259,8 @@ fn move_to_writes_the_new_file_before_removing_the_old_one() {
     let new = dir.path().join("argot/no-due.ics");
     assert_eq!(fs::read(&new).unwrap(), bytes, "same bytes, same UID");
     assert_eq!(store.get(TEST_TASK).unwrap().project, argot());
-    assert_eq!(store.tasks(None).unwrap().len(), 12);
+    let (life_n, argot_n) = common::vdir_task_counts();
+    assert_eq!(store.tasks(None).unwrap().len(), life_n + argot_n);
     assert!(tmp_files(&dir).is_empty());
 
     store.move_to(TEST_TASK, &argot()).unwrap();
