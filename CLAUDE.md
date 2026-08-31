@@ -18,7 +18,8 @@ CalDAV task TUI in Rust (ratatui). The full design is in `docs/spec.md`; read it
 - Work one milestone at a time, in the order in the spec. Do not start M(n+1) until M(n) tests pass.
 - Tests first for `ical/` and `quickadd.rs`: fixtures in `tests/fixtures/` are the spec for interop; add a fixture for every bug found.
 - `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test` before declaring anything done.
-- Small commits, one concern each, imperative subject line under 60 chars.
+- Small commits, one concern each, imperative subject line under 60 chars. Commit without asking; always ask before pushing.
+- Before declaring a milestone done, spawn a fresh review agent with no shared context to review the milestone's code against the spec and this file, then address its findings.
 - When a better approach than the spec's turns up, update the spec and say what changed in one sentence. Features outside the current milestone still wait for approval.
 - Do not touch `~/.local/share/vdirsyncer` during tests; use a temp dir.
 
