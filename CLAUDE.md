@@ -6,7 +6,7 @@ CalDAV task TUI in Rust (ratatui). The full design is in `docs/spec.md`; read it
 
 - KISS and DRY. No feature that is not in the spec's current milestone. If something seems needed, propose it in one sentence and wait.
 - One `Task` model, one iCalendar codec, one `Store` trait. UI and CLI never touch the filesystem or parse `.ics` text directly.
-- Colors and styles exist only in `src/theme.rs` and `src/themes/*.toml`. `Color::` literals anywhere else fail the build (clippy `disallowed_types` / `disallowed_methods` configured in `clippy.toml`).
+- Colors and styles exist only in `src/theme.rs` and `src/themes/*.toml`. `ratatui::style::Color` and the `Stylize` trait anywhere else fail the build (clippy `disallowed_types` in `clippy.toml`), and `tests/lint.rs` rejects `Color::`, `Stylize` and `prelude::*` in every other source file.
 - Preserve every iCalendar property husk does not model. Saving an unmodified task must produce a byte-identical file modulo line folding. This is tested; do not weaken the test.
 - Never expand RRULE. Parse, describe, display. Completing a recurring task is refused with a hint.
 - All time arithmetic in UTC or in a zoned `DateTime<Tz>`. No `NaiveDateTime` math.

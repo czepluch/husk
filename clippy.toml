@@ -1,4 +1,5 @@
 # Colors live only in src/theme.rs, which allows this lint for itself.
 disallowed-types = [
     { path = "ratatui::style::Color", reason = "use a slot on `theme::Theme` instead of a color literal" },
+    { path = "ratatui::style::Stylize", reason = "use a slot on `theme::Theme` instead of a color method" },
 ]

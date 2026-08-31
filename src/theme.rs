@@ -448,6 +448,46 @@ mod tests {
     }
 
     #[test]
+    fn user_file_is_layered_on_the_flavor() {
+        let dir = std::env::temp_dir().join(format!("husk-theme-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("theme.toml");
+        std::fs::write(
+            &path,
+            "[styles]\ntitle = { underline = true }\n[symbols]\nset = \"nope\"\n",
+        )
+        .unwrap();
+        assert!(
+            Theme::load("phosphor", Some(&path)).is_err(),
+            "unknown symbol set"
+        );
+        std::fs::write(
+            &path,
+            "[styles]\ntitle = { underline = true }\n[symbols]\nset = \"ascii\"\n",
+        )
+        .unwrap();
+        let theme = Theme::load("phosphor", Some(&path)).unwrap();
+        assert_eq!(
+            theme.title,
+            Style::new().add_modifier(Modifier::UNDERLINED),
+            "a style slot is replaced whole"
+        );
+        assert_eq!(theme.symbols.done, "x");
+        assert_eq!(theme.symbols.overdue, "<");
+        assert_eq!(
+            theme.accent,
+            Style::new().fg(Color::Rgb(0x39, 0xff, 0x14)),
+            "untouched"
+        );
+        let missing = dir.join("missing.toml");
+        assert!(
+            Theme::load("phosphor", Some(&missing)).is_ok(),
+            "no file, no overrides"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn unknown_flavor_is_an_error() {
         assert!(builtin("solarized").is_err());
         assert!(Theme::load("phosphor", None).is_ok());
