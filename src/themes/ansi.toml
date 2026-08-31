@@ -1,0 +1,32 @@
+# ansi: only the terminal's own 16 colors and default foreground and
+# background, so husk looks like whatever the terminal theme decided.
+
+[colors]
+bg = "default"
+fg = "default"
+muted = "bright_black"
+accent = "green"
+border = "bright_black"
+border_active = "green"
+overdue = "red"
+due_today = "yellow"
+due_soon = "blue"
+done = "bright_black"
+pri_high = "red"
+pri_medium = "yellow"
+pri_low = "cyan"
+tag = "magenta"
+project = "blue"
+recurring = "cyan"
+
+[styles]
+selected = { reverse = true }
+title = { fg = "accent", bold = true }
+status_bar = { fg = "muted" }
+help_key = { fg = "accent", bold = true }
+
+[symbols]
+set = "unicode"
+
+[borders]
+style = "plain"

@@ -1,0 +1,33 @@
+# phosphor: near-black background, green accent, amber for today, red for
+# overdue, dim gray chrome. Every key here can be overridden from
+# ~/.config/husk/theme.toml.
+
+[colors]
+bg = "#0a0c0a"
+fg = "#c8d0c0"
+muted = "#5c665c"
+accent = "#39ff14"
+border = "#2f3a2f"
+border_active = "#39ff14"
+overdue = "#ff4040"
+due_today = "#ffb000"
+due_soon = "#4cc9f0"
+done = "#5c665c"
+pri_high = "#ff4040"
+pri_medium = "#ffb000"
+pri_low = "#4cc9f0"
+tag = "#c774e8"
+project = "#4cc9f0"
+recurring = "#2ec4b6"
+
+[styles]
+selected = { bg = "#1b2a1b", bold = true }
+title = { fg = "accent", bold = true }
+status_bar = { fg = "muted" }
+help_key = { fg = "accent", bold = true }
+
+[symbols]
+set = "unicode"
+
+[borders]
+style = "plain"

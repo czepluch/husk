@@ -224,7 +224,7 @@ Design, in three layers, all resolved into one `Theme` struct at startup:
 
 2. Scheme files. `theme = "~/.config/husk/themes/<name>.yaml"` loads any Base16 or Base24 scheme file from tinted-theming unmodified. That is several hundred maintained schemes (Catppuccin, Gruvbox, Tokyo Night, Nord, and so on) with no porting work, and the same files btop, yazi flavors and many others are generated from. husk maps the 16 or 24 base slots to its semantic slots with a fixed table.
 
-3. Semantic overrides. `~/.config/husk/theme.toml` sets individual semantic slots, on top of either layer above. This is the yazi and btop model: a flat file of named slots, each a style (`fg`, `bg`, `bold`, `italic`, `underline`, `dim`), colors as hex, ANSI names, or `base0X` references.
+3. Semantic overrides. `~/.config/husk/theme.toml` sets individual semantic slots, on top of either layer above. This is the yazi and btop model: a flat file of named slots, each a style (`fg`, `bg`, `bold`, `italic`, `underline`, `dim`, `reverse`), colors as hex, ANSI names, or `base0X` references.
 
 Semantic slots, kept small and stable so themes do not rot when the UI changes:
 
@@ -254,7 +254,7 @@ status_bar = { fg = "muted" }
 help_key = { fg = "accent", bold = true }
 
 [symbols]
-set = "nerd"            # "nerd" | "ascii" | custom table below
+set = "unicode"         # "unicode" | "ascii" | custom table below; "nerd" once its glyphs are verified
 recurring = ""
 overdue = "!"
 done = "✓"

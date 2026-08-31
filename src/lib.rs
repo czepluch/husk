@@ -1,6 +1,9 @@
 //! Core of husk: task model, iCalendar codec and storage layer.
 //! The binary in `main.rs` and the tests in `tests/` build on this crate.
 
+pub mod config;
 pub mod ical;
 pub mod model;
 pub mod store;
+pub mod theme;
+pub mod ui;
