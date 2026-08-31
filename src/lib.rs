@@ -2,3 +2,4 @@
 //! The binary in `main.rs` and the tests in `tests/` build on this crate.
 
 pub mod ical;
+pub mod model;
