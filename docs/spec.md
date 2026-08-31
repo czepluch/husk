@@ -118,6 +118,7 @@ pub trait Store {
     fn delete(&self, uid: &str) -> Result<()>;
     fn move_to(&self, uid: &str, project: &ProjectId) -> Result<()>;
     fn restore(&self, task: &Task) -> Result<Task>;      // undo: rewrite a task from memory, SEQUENCE raised above the file's
+    fn stamp(&self) -> Result<u64>;                       // changes whenever the data may have; polled by the TUI
 }
 ```
 
@@ -164,7 +165,7 @@ item_types = ["VTODO"]
 
 The password sits in the config file itself, `chmod 600`. A `pass` or keyring lookup needs an unlocked gpg-agent or secret service every time the systemd timer fires, which fails quietly after a reboot until something prompts for the key. A mode-600 file in the home directory is the same trust boundary as the vdir it syncs.
 
-husk runs `vdirsyncer sync` (configurable command; empty disables) in a background thread after every mutation, debounced so a burst becomes one run with at most one run per two seconds, and on the `s` key. When a run finishes the TUI reloads the vdir, and the bar shows `syncing`, `synced HH:MM` or the failure. A systemd user timer every five minutes is the backstop and also picks up phone edits. `vdirsyncer discover` followed by `vdirsyncer metasync` must run whenever a list is created or renamed on a phone, because `sync` alone never carries `displayname` and `color`; `husk sync --discover` wraps both. The Arch package ships `vdirsyncer.timer` at 15 minutes; a drop-in sets `OnUnitActiveSec=5m`.
+husk runs `vdirsyncer sync` (configurable command; empty disables) in a background thread after every mutation, debounced so a burst becomes one run with at most one run per two seconds, and on the `s` key. When a run finishes the TUI reloads the vdir, and the bar shows `syncing`, `synced HH:MM` or the failure. The TUI also requests a sync at startup, polls the store's change stamp (vdir directory mtimes) to reload after runs it did not start, and on quit waits for a pending run to finish. Edits are applied to the task as it was displayed, so a phone edit synced in between makes the store refuse the save; the list reloads and the edit is retried by hand. A systemd user timer every five minutes is the backstop and also picks up phone edits. `vdirsyncer discover` followed by `vdirsyncer metasync` must run whenever a list is created or renamed on a phone, because `sync` alone never carries `displayname` and `color`; `husk sync --discover` wraps both. The Arch package ships `vdirsyncer.timer` at 15 minutes; a drop-in sets `OnUnitActiveSec=5m`.
 
 ## 6. Notifications
 
@@ -177,7 +178,7 @@ husk runs `vdirsyncer sync` (configurable command; empty disables) in a backgrou
 
 Idempotent by construction: running it twice in a row fires nothing the second time; missing a few runs (laptop asleep) fires everything that came due since `last_run` once, on wake.
 
-Writing alarms: when the TUI creates a task with a timed due date, or sets a timed due date on a task that has no alarms, it adds one `VALARM` per lead time in `default_alarm_leads` (`0m` is the alarm at due). Existing alarms are never replaced. This is what makes a task created in the terminal notify on the phone. Apple Reminders fires from the alarm, not the due date, so this is not optional if phone notifications matter. Tasks.org honors the same alarm.
+Writing alarms: when the TUI creates a task with a timed due date, or sets a timed due date on a task that has no alarms, it adds one `VALARM` per lead time in `default_alarm_leads` (`0m` is the alarm at due), each with `TRIGGER;RELATED=END` so the trigger counts from `DUE` (RFC 5545 defaults to `START`, and husk never writes a `DTSTART`). Existing alarms are never replaced; clearing a due date drops relative alarms and keeps absolute ones. Whether iOS fires a `RELATED=END` trigger on a husk-created task is verified on the phone, not assumed. This is what makes a task created in the terminal notify on the phone. Apple Reminders fires from the alarm, not the due date, so this is not optional if phone notifications matter. Tasks.org honors the same alarm.
 
 ## 7. TUI
 
@@ -199,7 +200,7 @@ Layout, ratatui plus crossterm:
 
 Views: `Today` (due today or overdue, all projects), `Upcoming` (next 7 days), `All`, one per project. `c` toggles completed tasks into the current view, dimmed and sorted last: Today shows what was completed today, Upcoming the last seven days, All and the projects everything. Sort: overdue first, then due time, then priority, then created; undated tasks after dated ones, done tasks last. Recurring tasks show `↻` and a human rule ("weekly", "every 2nd Tuesday"); `d` on one is refused with a one-line hint. Subtasks render indented under their parent.
 
-Keys, vim-flavored: `j`/`k` move, `g`/`G` first/last, `Tab` switch pane, `Enter` detail (in the projects pane: focus the task list), `J`/`K` scroll the detail, `Esc` back or clear the filter, `a` quick add, `d` done (and reopen), `x` delete (confirm), `u` undo, `e` edit summary, `n` edit notes in `$EDITOR`, `t` due (same date grammar as quick add, empty clears), `p` cycle priority none, high, medium, low, `T` tags, `m` move project (picker), `/` filter, `s` sync, `c` show completed, `?` help, `q` quit. Undo covers add, change, complete, delete and move for the session (last 20). Quick add without `@project` uses the project of the current view, else `default_project`, else asks.
+Keys, vim-flavored: `j`/`k` move, `g`/`G` first/last, `Tab` switch pane, `Enter` detail (in the projects pane: focus the task list), `J`/`K` scroll the detail, `Esc` back or clear the filter, `a` quick add, `d` done (and reopen), `x` delete (confirm), `u` undo, `e` edit summary, `n` edit notes in `$EDITOR`, `t` due (same date grammar as quick add, empty clears), `p` cycle priority none, high, medium, low, `T` tags, `m` move project (picker), `/` filter, `s` sync, `c` show completed, `?` help, `q` quit. Undo covers add, change, complete, delete and move for the session (last 20). Quick add without `@project` uses the project of the current view, else `default_project`, else refuses with a hint; a prompt that fails keeps its text so it can be fixed.
 
 Quick add grammar, one line, Taskwarrior-shaped, parsed by a small tokenizer rather than NLP:
 
@@ -306,11 +307,10 @@ src/
   themes/         embedded flavors: phosphor.toml, ansi.toml, mono.toml
   ui/
     app.rs        state machine, key handling
-    views.rs      project pane, task list, detail
-    widgets.rs
+    views.rs        project pane, task list, detail, prompts, popups
 ```
 
-Dependencies: `ratatui`, `crossterm`, `clap`, `serde` + `toml`, `chrono` + `chrono-tz`, `uuid`, `notify-rust` (desktop notifications), `notify` (file watching for theme hot reload), `anyhow`, `directories`. For RRULE display, `rrule` for parsing and validation only; it has no human-readable describer, so the "weekly" / "every 2nd Tuesday" text is a small function of ours, and occurrences are never expanded in v1. For Base16 scheme files (M5), `serde_yaml` is archived upstream; a scheme file is a flat `palette:` map, so either a maintained YAML crate or a few dozen lines of hand parsing, decided when M5 starts. Write the iCalendar codec yourself; the existing crates either do not preserve unknown properties or do not round-trip, and the format is small enough that a few hundred lines with fixtures is less risk than a dependency you have to fight.
+Dependencies: `ratatui`, `crossterm`, `clap`, `serde` + `toml`, `chrono` + `chrono-tz`, `uuid`, `notify-rust` (desktop notifications), `notify` (file watching for theme hot reload), `anyhow`, `directories`, `unicode-width` (display widths for wrapping and column layout). For RRULE display, `rrule` for parsing and validation only; it has no human-readable describer, so the "weekly" / "every 2nd Tuesday" text is a small function of ours, and occurrences are never expanded in v1. For Base16 scheme files (M5), `serde_yaml` is archived upstream; a scheme file is a flat `palette:` map, so either a maintained YAML crate or a few dozen lines of hand parsing, decided when M5 starts. Write the iCalendar codec yourself; the existing crates either do not preserve unknown properties or do not round-trip, and the format is small enough that a few hundred lines with fixtures is less risk than a dependency you have to fight.
 
 Config:
 
