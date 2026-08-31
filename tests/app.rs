@@ -103,7 +103,7 @@ fn sample() -> App {
             "Old thing",
             "life",
             Some("DUE;VALUE=DATE:20260830"),
-            "STATUS:COMPLETED\r\n",
+            "STATUS:COMPLETED\r\nCOMPLETED:20260831T101451Z\r\n",
         ),
     ];
     App::new(Config::default(), projects, tasks, now())
@@ -328,15 +328,15 @@ fn keys_drive_navigation_filter_and_modes() {
     let mut app = sample();
     assert_eq!(app.pane, Pane::Tasks);
     app.handle_key(key('j'));
-    assert_eq!(app.task_index, 1);
+    assert_eq!(app.task_index(), 1);
     app.handle_key(key('G'));
-    assert_eq!(app.task_index, 3);
+    assert_eq!(app.task_index(), 3);
     app.handle_key(key('j'));
-    assert_eq!(app.task_index, 3, "clamped at the end");
+    assert_eq!(app.task_index(), 3, "clamped at the end");
     app.handle_key(key('g'));
-    assert_eq!(app.task_index, 0);
+    assert_eq!(app.task_index(), 0);
     app.handle_key(key('k'));
-    assert_eq!(app.task_index, 0, "clamped at the start");
+    assert_eq!(app.task_index(), 0, "clamped at the start");
 
     app.handle_key(code(KeyCode::Tab));
     assert_eq!(app.pane, Pane::Views);
@@ -348,7 +348,7 @@ fn keys_drive_navigation_filter_and_modes() {
     app.handle_key(code(KeyCode::Enter));
     assert_eq!(app.mode, Mode::Detail);
     app.handle_key(key('j'));
-    assert_eq!(app.task_index, 1, "j moves within the detail view too");
+    assert_eq!(app.task_index(), 1, "j moves within the detail view too");
     app.handle_key(code(KeyCode::Esc));
     assert_eq!(app.mode, Mode::Normal);
 
@@ -479,22 +479,26 @@ fn long_summaries_wrap_under_the_summary_column() {
     let mut terminal = Terminal::new(TestBackend::new(70, 12)).unwrap();
     terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
     let text = screen(&terminal);
-    assert!(
-        text.contains("│   today          Her er en meget lang"),
-        "{text}"
-    );
-    assert!(
-        text.contains("listen #tag"),
-        "wrapped tail with the tag:\n{text}"
-    );
-    let continuation = text.lines().find(|l| l.contains("listen #tag")).unwrap();
-    assert!(
-        continuation.starts_with("│                  "),
-        "indented under the summary column:\n{text}"
+    let column = |line: &str, needle: &str| line.find(needle).map(|i| line[..i].chars().count());
+    let first = text
+        .lines()
+        .find(|l| l.contains("Her er en meget"))
+        .unwrap();
+    assert!(first.contains("today"), "{text}");
+    let tail = text.lines().find(|l| l.contains("listen #tag")).unwrap();
+    let tail_start = tail
+        .chars()
+        .enumerate()
+        .skip(25)
+        .find(|(_, c)| *c != ' ')
+        .map(|(i, _)| i);
+    assert_eq!(
+        tail_start,
+        column(first, "Her er"),
+        "continuation under the summary column:\n{text}"
     );
     assert!(text.lines().all(|l| l.chars().count() <= 70));
 }
-
 #[test]
 fn priority_is_shown_as_title_weight() {
     use ratatui::style::Modifier;
@@ -528,4 +532,272 @@ fn priority_is_shown_as_title_weight() {
         text.contains("!!! High one") && text.contains("!   Low one"),
         "{text}"
     );
+}
+
+#[test]
+fn selection_follows_the_task_when_time_reorders_the_list() {
+    let mut app = sample();
+    app.handle_key(key('j'));
+    app.handle_key(key('j'));
+    assert_eq!(app.selected_task().unwrap().uid, "today-all-day");
+    assert_eq!(app.task_index(), 2);
+
+    // At 15:00:01 "Call Gustav" turns overdue and jumps ahead of the all-day task.
+    app.now = Local
+        .with_ymd_and_hms(2026, 8, 31, 15, 0, 1)
+        .single()
+        .unwrap();
+    assert_eq!(
+        uids(&app),
+        vec!["overdue-day", "today-early", "today-later", "today-all-day"]
+    );
+    assert_eq!(app.selected_task().unwrap().uid, "today-all-day");
+    assert_eq!(app.task_index(), 3);
+
+    // When the selected task leaves the list the cursor stays where it was.
+    app.filter = "gustav".to_string();
+    assert_eq!(app.selected_task().unwrap().uid, "today-later");
+}
+
+#[test]
+fn completed_tasks_qualify_for_today_and_upcoming_by_completion_time() {
+    let mut app = sample();
+    app.tasks.push(task(
+        "done-old",
+        "Done ten days ago",
+        "life",
+        Some("DUE;VALUE=DATE:20260101"),
+        "STATUS:COMPLETED\r\nCOMPLETED:20260821T100000Z\r\n",
+    ));
+    app.tasks.push(task(
+        "done-when",
+        "Done, no timestamp",
+        "life",
+        Some("DUE;VALUE=DATE:20260101"),
+        "STATUS:COMPLETED\r\n",
+    ));
+    app.show_done = true;
+    assert_eq!(
+        uids(&app).last(),
+        Some(&"done"),
+        "completed today shows in Today"
+    );
+    assert!(!uids(&app).contains(&"done-old"));
+    assert!(!uids(&app).contains(&"done-when"));
+
+    app.view_index = 1;
+    assert!(uids(&app).contains(&"done"));
+    assert!(
+        !uids(&app).contains(&"done-old"),
+        "ten days ago is outside Upcoming"
+    );
+
+    app.view_index = 2;
+    let all = uids(&app);
+    assert!(all.contains(&"done") && all.contains(&"done-old") && all.contains(&"done-when"));
+    assert_eq!(app.count(&View::All), 7, "counts stay pending-only");
+}
+
+#[test]
+fn filter_ignores_keys_with_control_or_alt() {
+    let mut app = sample();
+    app.handle_key(key('/'));
+    app.handle_key(key('b'));
+    app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+    app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT));
+    app.handle_key(KeyEvent::new(KeyCode::Char('Å'), KeyModifiers::SHIFT));
+    assert_eq!(app.filter, "bÅ");
+}
+
+#[test]
+fn due_column_grows_for_wide_labels() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let tasks = vec![
+        task(
+            "far",
+            "aaaa bbbb cccc dddd eeee",
+            "p",
+            Some(&format!("DUE:{}", local_utc(2026, 9, 9, 10, 0))),
+            "",
+        ),
+        task("near", "Short", "p", Some("DUE;VALUE=DATE:20260831"), ""),
+    ];
+    let mut app = App::new(Config::default(), vec![], tasks, now());
+    app.view_index = 2;
+    let mut terminal = Terminal::new(TestBackend::new(70, 8)).unwrap();
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let text = screen(&terminal);
+    let far = text
+        .lines()
+        .find(|l| l.contains("2026-09-09 10:00"))
+        .unwrap();
+    let near = text.lines().find(|l| l.contains("Short")).unwrap();
+    assert!(far.contains("2026-09-09 10:00     aaaa"), "{text}");
+    assert_eq!(
+        far.find("aaaa"),
+        near.find("Short"),
+        "summaries align:\n{text}"
+    );
+}
+
+#[test]
+fn tall_rows_are_capped_and_long_words_break() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let many = "et to tre fire fem seks syv otte ni ti elleve tolv tretten fjorten femten seksten sytten atten nitten tyve";
+    let url = "https://example.invalid/a/very/long/path/that/has/no/spaces/at/all/anywhere";
+    let tasks = vec![
+        task("many", many, "p", None, ""),
+        task("after", "After the tall one", "p", None, ""),
+        task("url", url, "p", None, ""),
+    ];
+    let mut app = App::new(Config::default(), vec![], tasks, now());
+    app.view_index = 2;
+    let mut terminal = Terminal::new(TestBackend::new(50, 12)).unwrap();
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(
+        text.contains("…"),
+        "capped rows end in an ellipsis:\n{text}"
+    );
+    assert!(
+        !text.contains("tyve"),
+        "the tail of a capped row is gone:\n{text}"
+    );
+    assert!(
+        text.contains("After the") && text.contains("tall one"),
+        "tasks after a tall one still render:\n{text}"
+    );
+    assert!(
+        text.contains("mple.invali"),
+        "a long word is broken by width:\n{text}"
+    );
+
+    let mut wide = Terminal::new(TestBackend::new(90, 12)).unwrap();
+    wide.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let text = screen(&wide);
+    assert!(
+        text.contains("anywhere"),
+        "the whole word shows when three rows suffice:\n{text}"
+    );
+}
+#[test]
+fn detail_scrolls_and_help_returns_to_it() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let notes: Vec<String> = (1..=30).map(|i| format!("note line {i}")).collect();
+    let extra = format!(
+        "DTSTART;VALUE=DATE:20260830\r\nSTATUS:COMPLETED\r\nCOMPLETED:20260831T090000Z\r\nDESCRIPTION:{}\r\n",
+        notes.join("\\n")
+    );
+    let tasks = vec![task(
+        "notes",
+        "Notes",
+        "p",
+        Some("DUE;VALUE=DATE:20260831"),
+        &extra,
+    )];
+    let mut app = App::new(Config::default(), vec![], tasks, now());
+    app.view_index = 2;
+    app.show_done = true;
+    let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
+
+    app.handle_key(code(KeyCode::Enter));
+    assert_eq!(app.mode, Mode::Detail);
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(text.contains("Start"), "{text}");
+    assert!(text.contains("Completed"), "{text}");
+    assert!(!text.contains("note line 20"));
+
+    for _ in 0..3 {
+        app.handle_key(key('J'));
+    }
+    assert_eq!(app.detail_scroll, 15);
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(
+        !text.contains("Summary"),
+        "scrolled past the header:\n{text}"
+    );
+    assert!(text.contains("note line"), "{text}");
+    app.handle_key(key('K'));
+    assert_eq!(app.detail_scroll, 10);
+
+    app.handle_key(key('?'));
+    assert_eq!(app.mode, Mode::Help);
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    app.handle_key(code(KeyCode::Esc));
+    assert_eq!(app.mode, Mode::Detail, "help returns where it came from");
+    app.handle_key(code(KeyCode::Esc));
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn long_project_names_are_cut_with_the_count_kept() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let projects = vec![Project {
+        id: ProjectId::new("house"),
+        name: "Indkøb og husholdning i lejligheden".to_string(),
+        color: None,
+    }];
+    let tasks = vec![task("t", "t", "house", None, "")];
+    let app = App::new(Config::default(), projects, tasks, now());
+    let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let text = screen(&terminal);
+    let row = text.lines().find(|l| l.contains("Indkøb")).unwrap();
+    assert!(row.contains("…"), "{text}");
+    assert!(
+        row.contains("   1 │"),
+        "count stays inside the pane:\n{text}"
+    );
+}
+
+#[test]
+fn small_terminals_render_content_in_every_mode() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let mut app = sample();
+    app.view_index = 2;
+    for (w, h) in [(20, 5), (30, 8), (50, 12), (5, 3)] {
+        for mode in [Mode::Normal, Mode::Detail, Mode::Help] {
+            app.mode = mode;
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+        }
+    }
+    app.mode = Mode::Normal;
+    let mut terminal = Terminal::new(TestBackend::new(50, 12)).unwrap();
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(text.contains("Pay"), "{text}");
+}
+#[test]
+fn alarm_texts_read_naturally() {
+    use chrono::TimeDelta;
+    use husk::model::{Alarm, Anchor};
+    let config = Config::default();
+    let rel = |secs: i64, anchor: Anchor| {
+        app::alarm_text(
+            &Alarm::Relative {
+                offset: TimeDelta::seconds(secs),
+                anchor,
+            },
+            &config,
+        )
+    };
+    assert_eq!(rel(0, Anchor::Due), "at due");
+    assert_eq!(rel(0, Anchor::Start), "at start");
+    assert_eq!(rel(-900, Anchor::Due), "15m before due");
+    assert_eq!(rel(-3600, Anchor::Due), "1h before due");
+    assert_eq!(rel(86_400, Anchor::Due), "1d after due");
+    assert_eq!(rel(-90, Anchor::Due), "90s before due");
+    let absolute = app::alarm_text(&Alarm::Absolute(local_utc_at(2026, 9, 3, 9, 0)), &config);
+    assert_eq!(absolute, "2026-09-03 09:00");
+}
+
+fn local_utc_at(y: i32, m: u32, d: u32, h: u32, mi: u32) -> chrono::DateTime<chrono::Utc> {
+    Local
+        .with_ymd_and_hms(y, m, d, h, mi, 0)
+        .single()
+        .unwrap()
+        .to_utc()
 }

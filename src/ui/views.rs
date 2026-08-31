@@ -6,12 +6,16 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::app::{App, Bucket, Mode, Pane, View, alarm_text, bucket, due_detail, due_label};
+use super::app::{App, Bucket, Mode, Pane, View, alarm_text, bucket, due_detail, due_label, stamp};
 use crate::model::{Priority, Status, Task};
 use crate::theme::Theme;
 
 const VIEWS_WIDTH: u16 = 24;
+/// A list row shows at most this many lines of a long summary.
+const MAX_ROWS: usize = 3;
+const ELLIPSIS: &str = "…";
 
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
@@ -20,9 +24,12 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     let [left, right] =
         Layout::horizontal([Constraint::Length(VIEWS_WIDTH), Constraint::Min(20)]).areas(main);
     draw_views(frame, app, theme, left);
-    match app.mode {
-        Mode::Detail => draw_detail(frame, app, theme, right),
-        _ => draw_tasks(frame, app, theme, right),
+    let detail =
+        app.mode == Mode::Detail || (app.mode == Mode::Help && app.help_from == Mode::Detail);
+    if detail {
+        draw_detail(frame, app, theme, right);
+    } else {
+        draw_tasks(frame, app, theme, right);
     }
     draw_bar(frame, app, theme, bar);
     if app.mode == Mode::Help {
@@ -45,6 +52,25 @@ fn block<'a>(theme: &Theme, title: impl Into<Line<'a>>, active: bool) -> Block<'
     }
 }
 
+/// Cuts text to a display width, ending in an ellipsis when it was longer.
+fn fit(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > width.saturating_sub(1) {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    out.push_str(ELLIPSIS);
+    out
+}
+
 fn draw_views(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let inner_width = usize::from(area.width.saturating_sub(2));
     let name_width = inner_width.saturating_sub(6);
@@ -61,9 +87,10 @@ fn draw_views(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             View::Project(_) => theme.project,
             _ => Style::default(),
         };
-        let name = app.view_name(view);
+        let name = fit(&app.view_name(view), name_width);
+        let pad = " ".repeat(name_width.saturating_sub(name.width()));
         let count = app.count(view);
-        let row = format!(" {name:<name_width$}{count:>4} ");
+        let row = format!(" {name}{pad}{count:>4} ");
         items.push(ListItem::new(Line::styled(row, style)));
         if i == app.view_index {
             selected = items.len() - 1;
@@ -87,8 +114,11 @@ fn draw_tasks(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         title.push_str(" +done");
     }
     title.push(' ');
-    let due = Line::styled(format!(" {} due ", app.due_count()), theme.muted).right_aligned();
-    let block = block(theme, title, app.pane == Pane::Tasks).title_top(due);
+    let mut block = block(theme, title, app.pane == Pane::Tasks);
+    if area.width >= 40 {
+        let due = Line::styled(format!(" {} due ", app.due_count()), theme.muted).right_aligned();
+        block = block.title_top(due);
+    }
     if tasks.is_empty() {
         let empty = Paragraph::new(Line::styled("No tasks", theme.muted))
             .centered()
@@ -96,14 +126,22 @@ fn draw_tasks(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         frame.render_widget(empty, area);
         return;
     }
+    // The due column is as wide as the widest label on screen, so a long
+    // date format never pushes the summary around.
+    let label_width = tasks
+        .iter()
+        .map(|t| due_label(t.due, app.now, &app.config).width())
+        .max()
+        .unwrap_or(5)
+        .clamp(5, 20);
     let items: Vec<ListItem> = tasks
         .iter()
-        .map(|task| ListItem::new(task_item(task, app, theme, area.width)))
+        .map(|task| ListItem::new(task_item(task, app, theme, area.width, label_width)))
         .collect();
     let list = List::new(items)
         .block(block)
         .highlight_style(theme.selected);
-    let mut state = ListState::default().with_selected(Some(app.task_index));
+    let mut state = ListState::default().with_selected(Some(app.task_index()));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -125,9 +163,6 @@ fn priority_style(priority: Priority, theme: &Theme) -> Style {
     }
 }
 
-/// Width of the columns before the summary: flag, due label, priority.
-const PREFIX_WIDTH: usize = 18;
-
 fn priority_marker(priority: Priority) -> &'static str {
     match priority {
         Priority::High => "!!!",
@@ -137,10 +172,16 @@ fn priority_marker(priority: Priority) -> &'static str {
     }
 }
 
-/// One list item: the columns, then the summary, tags and recurring symbol
-/// wrapped by word to the pane width, continuation lines indented under the
-/// summary column.
-fn task_item<'a>(task: &'a Task, app: &App, theme: &Theme, pane_width: u16) -> Text<'a> {
+/// One list item: flag, due label and priority columns, then the summary,
+/// tags and recurring symbol wrapped by word to the pane width. Continuation
+/// lines sit under the summary column; at most `MAX_ROWS` lines are shown.
+fn task_item<'a>(
+    task: &'a Task,
+    app: &App,
+    theme: &Theme,
+    pane_width: u16,
+    label_width: usize,
+) -> Text<'a> {
     let done = task.is_done();
     let dim = |style: Style| if done { theme.done } else { style };
     let due = dim(due_style(task, app, theme));
@@ -155,9 +196,10 @@ fn task_item<'a>(task: &'a Task, app: &App, theme: &Theme, pane_width: u16) -> T
     let marker = priority_marker(task.priority);
     let prefix = vec![
         Span::styled(format!(" {flag} "), due),
-        Span::styled(format!("{label:<10} "), due),
+        Span::styled(format!("{label:<label_width$} "), due),
         Span::styled(format!("{marker:<3} "), dim(theme.muted)),
     ];
+    let prefix_width = label_width + 8;
 
     let text = dim(priority_style(task.priority, theme));
     let mut words: Vec<Span<'a>> = task
@@ -177,13 +219,24 @@ fn task_item<'a>(task: &'a Task, app: &App, theme: &Theme, pane_width: u16) -> T
         ));
     }
 
-    let width = usize::from(pane_width.saturating_sub(2)).saturating_sub(PREFIX_WIDTH);
+    let width = usize::from(pane_width.saturating_sub(2))
+        .saturating_sub(prefix_width)
+        .max(8);
+    let mut rows = wrap_words(words, width);
+    if rows.len() > MAX_ROWS {
+        rows.truncate(MAX_ROWS);
+        let last = &mut rows[MAX_ROWS - 1];
+        while row_width(last) + 2 > width && last.len() > 1 {
+            last.pop();
+        }
+        last.push(Span::styled(ELLIPSIS, dim(theme.muted)));
+    }
     let mut lines = Vec::new();
-    for (i, row) in wrap_words(words, width.max(8)).into_iter().enumerate() {
+    for (i, row) in rows.into_iter().enumerate() {
         let mut spans = if i == 0 {
             prefix.clone()
         } else {
-            vec![Span::raw(" ".repeat(PREFIX_WIDTH))]
+            vec![Span::raw(" ".repeat(prefix_width))]
         };
         for (j, word) in row.into_iter().enumerate() {
             if j > 0 {
@@ -199,16 +252,19 @@ fn task_item<'a>(task: &'a Task, app: &App, theme: &Theme, pane_width: u16) -> T
     Text::from(lines)
 }
 
-/// Greedy word wrap on display width; a word wider than the line gets a
-/// line of its own and is clipped by the widget.
+fn row_width(row: &[Span]) -> usize {
+    row.iter().map(Span::width).sum::<usize>() + row.len().saturating_sub(1)
+}
+
+/// Greedy word wrap on display width. A word wider than a line is broken
+/// by width, so a long URL or a run of CJK still shows in full.
 fn wrap_words<'a>(words: Vec<Span<'a>>, width: usize) -> Vec<Vec<Span<'a>>> {
     let mut rows: Vec<Vec<Span<'a>>> = Vec::new();
     let mut current: Vec<Span<'a>> = Vec::new();
     let mut used = 0;
-    for word in words {
+    for word in words.into_iter().flat_map(|w| break_word(w, width)) {
         let w = word.width();
-        let needed = if current.is_empty() { w } else { used + 1 + w };
-        if !current.is_empty() && needed > width {
+        if !current.is_empty() && used + 1 + w > width {
             rows.push(std::mem::take(&mut current));
             used = 0;
         }
@@ -219,6 +275,29 @@ fn wrap_words<'a>(words: Vec<Span<'a>>, width: usize) -> Vec<Vec<Span<'a>>> {
         rows.push(current);
     }
     rows
+}
+
+fn break_word<'a>(word: Span<'a>, width: usize) -> Vec<Span<'a>> {
+    if word.width() <= width {
+        return vec![word];
+    }
+    let style = word.style;
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    let mut used = 0;
+    for c in word.content.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > width && !piece.is_empty() {
+            pieces.push(Span::styled(std::mem::take(&mut piece), style));
+            used = 0;
+        }
+        piece.push(c);
+        used += w;
+    }
+    if !piece.is_empty() {
+        pieces.push(Span::styled(piece, style));
+    }
+    pieces
 }
 
 fn draw_detail(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
@@ -260,12 +339,24 @@ fn draw_detail(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 None => Span::styled("-", theme.muted),
             },
         ]),
-        Line::from(vec![
-            label("Priority"),
-            Span::styled(priority, priority_style(task.priority, theme)),
-        ]),
-        Line::from(vec![label("Status"), Span::raw(status)]),
     ];
+    if let Some(start) = task.start {
+        lines.push(Line::from(vec![
+            label("Start"),
+            Span::raw(due_detail(start, app.now, config)),
+        ]));
+    }
+    lines.push(Line::from(vec![
+        label("Priority"),
+        Span::styled(priority, priority_style(task.priority, theme)),
+    ]));
+    lines.push(Line::from(vec![label("Status"), Span::raw(status)]));
+    if let Some(at) = task.completed {
+        lines.push(Line::from(vec![
+            label("Completed"),
+            Span::styled(stamp(at, config), theme.done),
+        ]));
+    }
     if !task.tags.is_empty() {
         let tags: Vec<String> = task.tags.iter().map(|t| format!("#{t}")).collect();
         lines.push(Line::from(vec![
@@ -297,14 +388,9 @@ fn draw_detail(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         lines.push(Line::from(vec![label("Parent"), Span::raw(parent.clone())]));
     }
     if let Some(created) = task.created {
-        let format = format!("{} {}", config.date_format, config.time_format);
-        let text = created
-            .with_timezone(&chrono::Local)
-            .format(&format)
-            .to_string();
         lines.push(Line::from(vec![
             label("Created"),
-            Span::styled(text, theme.muted),
+            Span::styled(stamp(created, config), theme.muted),
         ]));
     }
     lines.push(Line::from(vec![
@@ -320,6 +406,7 @@ fn draw_detail(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     }
     let detail = Paragraph::new(Text::from(lines))
         .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll, 0))
         .block(block);
     frame.render_widget(detail, area);
 }
@@ -332,7 +419,12 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             Span::styled("▌", theme.accent),
         ]),
         Mode::Detail => hints(
-            &[("Esc", "back"), ("j/k", "next/prev"), ("?", "help")],
+            &[
+                ("Esc", "back"),
+                ("j/k", "next/prev"),
+                ("J/K", "scroll"),
+                ("?", "help"),
+            ],
             theme,
         ),
         Mode::Normal | Mode::Help => hints(
@@ -366,6 +458,7 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
         ("g / G", "first / last"),
         ("Tab", "switch pane"),
         ("Enter", "open the task, or focus the task list"),
+        ("J / K", "scroll the open task (PgUp / PgDn too)"),
         ("/", "filter by text; Enter keeps it, Esc clears it"),
         ("c", "show or hide completed tasks"),
         ("Esc", "back, or clear the filter"),

@@ -47,11 +47,19 @@ pub struct App {
     pub tasks: Vec<Task>,
     pub pane: Pane,
     pub view_index: usize,
-    pub task_index: usize,
+    /// The selected task's UID. The list is re-sorted as time passes, so the
+    /// selection follows the task rather than a position.
+    selected: Option<String>,
+    /// Where the cursor was, used when the selected task leaves the list.
+    cursor: usize,
     pub mode: Mode,
+    /// The mode `?` was pressed in, restored when the help closes.
+    pub help_from: Mode,
     pub filter: String,
     /// Whether completed and cancelled tasks are shown in the current view.
     pub show_done: bool,
+    /// Lines scrolled off the top of the detail view.
+    pub detail_scroll: u16,
     pub now: DateTime<Local>,
     pub quit: bool,
 }
@@ -69,10 +77,13 @@ impl App {
             tasks,
             pane: Pane::Tasks,
             view_index: 0,
-            task_index: 0,
+            selected: None,
+            cursor: 0,
             mode: Mode::Normal,
+            help_from: Mode::Normal,
             filter: String::new(),
             show_done: false,
+            detail_scroll: 0,
             now,
             quit: false,
         }
@@ -130,8 +141,21 @@ impl App {
         tasks
     }
 
+    /// The position of the selected task in the visible list.
+    pub fn task_index(&self) -> usize {
+        self.index_in(&self.visible_tasks())
+    }
+
+    fn index_in(&self, visible: &[&Task]) -> usize {
+        self.selected
+            .as_ref()
+            .and_then(|uid| visible.iter().position(|t| &t.uid == uid))
+            .unwrap_or_else(|| step(self.cursor, 0, visible.len()))
+    }
+
     pub fn selected_task(&self) -> Option<&Task> {
-        self.visible_tasks().get(self.task_index).copied()
+        let visible = self.visible_tasks();
+        visible.get(self.index_in(&visible)).copied()
     }
 
     /// Visible pending tasks that are due today or overdue.
@@ -162,20 +186,26 @@ impl App {
             return;
         }
         match self.mode {
-            Mode::Filter => self.filter_key(key.code),
+            Mode::Filter => self.filter_key(key),
             Mode::Help => {
                 if matches!(
                     key.code,
                     KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?' | 'q')
                 ) {
-                    self.mode = Mode::Normal;
+                    self.mode = self.help_from;
                 }
             }
             Mode::Detail => match key.code {
                 KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => self.mode = Mode::Normal,
                 KeyCode::Char('j') | KeyCode::Down => self.move_task(1),
                 KeyCode::Char('k') | KeyCode::Up => self.move_task(-1),
-                KeyCode::Char('?') => self.mode = Mode::Help,
+                KeyCode::Char('J') | KeyCode::PageDown => {
+                    self.detail_scroll = self.detail_scroll.saturating_add(5);
+                }
+                KeyCode::Char('K') | KeyCode::PageUp => {
+                    self.detail_scroll = self.detail_scroll.saturating_sub(5);
+                }
+                KeyCode::Char('?') => self.open_help(),
                 _ => {}
             },
             Mode::Normal => self.normal_key(key.code),
@@ -186,7 +216,7 @@ impl App {
     fn normal_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Char('?') => self.mode = Mode::Help,
+            KeyCode::Char('?') => self.open_help(),
             KeyCode::Char('/') => self.mode = Mode::Filter,
             KeyCode::Char('c') => self.show_done = !self.show_done,
             KeyCode::Tab | KeyCode::BackTab => {
@@ -200,6 +230,7 @@ impl App {
                 Pane::Tasks => {
                     if self.selected_task().is_some() {
                         self.mode = Mode::Detail;
+                        self.detail_scroll = 0;
                     }
                 }
             },
@@ -212,8 +243,16 @@ impl App {
         }
     }
 
-    fn filter_key(&mut self, code: KeyCode) {
-        match code {
+    fn open_help(&mut self) {
+        self.help_from = self.mode;
+        self.mode = Mode::Help;
+    }
+
+    fn filter_key(&mut self, key: KeyEvent) {
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        match key.code {
             KeyCode::Esc => {
                 self.filter.clear();
                 self.mode = Mode::Normal;
@@ -222,29 +261,54 @@ impl App {
             KeyCode::Backspace => {
                 self.filter.pop();
             }
-            KeyCode::Char(c) => self.filter.push(c),
+            KeyCode::Char(c) if plain => self.filter.push(c),
             _ => {}
         }
-        self.task_index = 0;
+        self.reset_cursor();
     }
 
     fn move_cursor(&mut self, delta: isize) {
         match self.pane {
             Pane::Views => {
                 self.view_index = step(self.view_index, delta, self.views().len());
-                self.task_index = 0;
+                self.reset_cursor();
             }
             Pane::Tasks => self.move_task(delta),
         }
     }
 
     fn move_task(&mut self, delta: isize) {
-        self.task_index = step(self.task_index, delta, self.visible_tasks().len());
+        let (index, uid) = {
+            let visible = self.visible_tasks();
+            let index = step(self.index_in(&visible), delta, visible.len());
+            (index, visible.get(index).map(|t| t.uid.clone()))
+        };
+        self.select(index, uid);
     }
 
+    fn select(&mut self, index: usize, uid: Option<String>) {
+        if uid != self.selected {
+            self.detail_scroll = 0;
+        }
+        self.cursor = index;
+        self.selected = uid;
+    }
+
+    fn reset_cursor(&mut self) {
+        self.cursor = 0;
+        self.selected = None;
+        self.detail_scroll = 0;
+    }
+
+    /// Keeps the cursor inside the lists and anchors the selection on a task.
     fn clamp(&mut self) {
         self.view_index = step(self.view_index, 0, self.views().len());
-        self.task_index = step(self.task_index, 0, self.visible_tasks().len());
+        let (index, uid) = {
+            let visible = self.visible_tasks();
+            let index = self.index_in(&visible);
+            (index, visible.get(index).map(|t| t.uid.clone()))
+        };
+        self.select(index, uid);
     }
 }
 
@@ -280,11 +344,29 @@ pub fn bucket(due: Option<Due>, now: DateTime<Local>) -> Bucket {
     }
 }
 
-/// Done tasks are hidden unless asked for; when shown, they qualify for
-/// Today and Upcoming by their due date like any other task.
+/// Done tasks are hidden unless asked for. When shown, they qualify by when
+/// they were finished: Today shows what was completed today, Upcoming the
+/// last seven days, All and the projects everything.
 pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) -> bool {
-    if task.is_done() && !show_done {
-        return false;
+    if task.is_done() {
+        if !show_done {
+            return false;
+        }
+        return match view {
+            View::All => true,
+            View::Project(id) => &task.project == id,
+            View::Today | View::Upcoming => {
+                let Some(at) = task.completed else {
+                    return false;
+                };
+                let days = (now.date_naive() - at.with_timezone(&Local).date_naive()).num_days();
+                if *view == View::Today {
+                    days == 0
+                } else {
+                    (0..=7).contains(&days)
+                }
+            }
+        };
     }
     match view {
         View::All => true,
@@ -298,7 +380,7 @@ pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) 
 }
 
 /// Overdue first, then by due time, then priority, then creation time.
-/// Done tasks come last.
+/// Undated tasks follow the dated ones and done tasks come last.
 pub fn sort_key(
     task: &Task,
     now: DateTime<Local>,
@@ -379,12 +461,15 @@ pub fn due_detail(due: Due, now: DateTime<Local>, config: &Config) -> String {
     format!("{text} ({relative})")
 }
 
+/// A timestamp in local time, for the detail view.
+pub fn stamp(at: DateTime<Utc>, config: &Config) -> String {
+    let format = format!("{} {}", config.date_format, config.time_format);
+    at.with_timezone(&Local).format(&format).to_string()
+}
+
 pub fn alarm_text(alarm: &Alarm, config: &Config) -> String {
     match alarm {
-        Alarm::Absolute(at) => {
-            let format = format!("{} {}", config.date_format, config.time_format);
-            at.with_timezone(&Local).format(&format).to_string()
-        }
+        Alarm::Absolute(at) => stamp(*at, config),
         Alarm::Relative { offset, anchor } => {
             let anchor = match anchor {
                 Anchor::Due => "due",
