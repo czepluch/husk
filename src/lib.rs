@@ -4,6 +4,7 @@
 pub mod config;
 pub mod ical;
 pub mod model;
+pub mod quickadd;
 pub mod store;
 pub mod theme;
 pub mod ui;
