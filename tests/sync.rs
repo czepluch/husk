@@ -83,3 +83,34 @@ fn failures_are_reported_and_an_empty_command_is_a_no_op() {
     thread::sleep(Duration::from_millis(800));
     assert_eq!(disabled.state().runs, 0);
 }
+
+#[test]
+fn flush_waits_for_a_pending_run_and_runs_are_two_seconds_apart() {
+    let dir = common::TempDir::new();
+    let marker = dir.path().join("runs");
+    let syncer = Syncer::new(vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        format!("date +%s%N >> {}", marker.display()),
+    ]);
+    syncer.request();
+    assert!(syncer.busy());
+    assert!(syncer.flush(Duration::from_secs(8)));
+    assert_eq!(syncer.state().runs, 1);
+    assert!(!syncer.busy());
+
+    thread::sleep(Duration::from_millis(700));
+    syncer.request();
+    assert!(syncer.flush(Duration::from_secs(8)));
+    assert_eq!(syncer.state().runs, 2);
+    let stamps: Vec<i128> = fs::read_to_string(&marker)
+        .unwrap()
+        .lines()
+        .map(|l| l.trim().parse().unwrap())
+        .collect();
+    assert!(stamps[1] - stamps[0] >= 2_000_000_000, "{stamps:?}");
+
+    let disabled = Syncer::new(vec![]);
+    disabled.request();
+    assert!(!disabled.busy(), "a disabled syncer is never busy");
+}

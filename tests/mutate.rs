@@ -222,9 +222,9 @@ fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
         due.as_str(),
         "CATEGORIES:money",
         "PRIORITY:1",
-        "TRIGGER:-P1D",
-        "TRIGGER:-PT1H",
-        "TRIGGER:PT0S",
+        "TRIGGER;RELATED=END:-P1D",
+        "TRIGGER;RELATED=END:-PT1H",
+        "TRIGGER;RELATED=END:PT0S",
     ] {
         assert!(text.contains(line), "{line} missing in\n{text}");
     }
@@ -253,6 +253,8 @@ fn a_needs_a_project_and_honours_overrides() {
         s.app.message
     );
     assert!(find_file(&s, "life", "No home").is_none());
+    assert_eq!(s.app.mode, Mode::Input, "a failed prompt stays open");
+    s.app.handle_key(code(KeyCode::Esc));
 
     s.app.handle_key(key('a'));
     type_text(&mut s.app, "With override @argot");
@@ -265,11 +267,13 @@ fn a_needs_a_project_and_honours_overrides() {
     type_text(&mut s.app, "Nowhere @nosuch");
     s.app.handle_key(code(KeyCode::Enter));
     assert!(s.app.message.as_deref().unwrap().contains("nosuch"));
+    s.app.handle_key(code(KeyCode::Esc));
 
     s.app.handle_key(key('a'));
     type_text(&mut s.app, "   ");
     s.app.handle_key(code(KeyCode::Enter));
     assert!(s.app.message.as_deref().unwrap().contains("title"));
+    s.app.handle_key(code(KeyCode::Esc));
 
     let mut d = sample_with(|c| c.default_project = Some("Life".to_string()));
     d.app.handle_key(key('a'));
@@ -357,11 +361,11 @@ fn e_t_p_and_upper_t_edit_the_selected_task() {
     assert!(!file(&s, "life/no-due.ics").contains("PRIORITY"));
 
     s.app.handle_key(key('T'));
-    type_text(&mut s.app, "home #garden home");
+    type_text(&mut s.app, "home, #garden ,home");
     s.app.handle_key(code(KeyCode::Enter));
     assert!(file(&s, "life/no-due.ics").contains("CATEGORIES:home,garden\n"));
     s.app.handle_key(key('T'));
-    assert_eq!(s.app.input.as_ref().unwrap().buffer, "home garden");
+    assert_eq!(s.app.input.as_ref().unwrap().buffer, "home, garden");
     clear_input(&mut s.app);
     s.app.handle_key(code(KeyCode::Enter));
     assert!(!file(&s, "life/no-due.ics").contains("CATEGORIES"));
@@ -384,7 +388,10 @@ fn m_moves_through_the_picker_and_u_moves_back() {
 
     s.app.handle_key(key('u'));
     assert!(!s.dir.path().join("argot/no-due.ics").exists());
-    assert!(s.dir.path().join(format!("life/{TEST_TASK}.ics")).exists());
+    assert!(
+        s.dir.path().join("life/no-due.ics").exists(),
+        "back under its own name"
+    );
     assert_eq!(s.app.selected_task().unwrap().project.as_str(), "life");
 }
 
@@ -459,7 +466,7 @@ fn writes_trigger_a_sync_and_a_finished_run_reloads() {
         .unwrap()
         .replace("SUMMARY:Have fun", "SUMMARY:Edited on the phone");
     fs::write(&path, edited).unwrap();
-    s.app.poll_sync();
+    s.app.poll();
     assert!(
         s.app
             .tasks
@@ -496,4 +503,276 @@ fn actions_work_from_the_detail_view_and_return_to_it() {
     s.app.handle_key(key('x'));
     s.app.handle_key(code(KeyCode::Esc));
     assert_eq!(s.app.mode, Mode::Detail);
+}
+
+#[test]
+fn a_phone_edit_synced_in_between_is_never_overwritten() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    let path = s.dir.path().join("life/no-due.ics");
+    let phone = fs::read_to_string(&path)
+        .unwrap()
+        .replace("SUMMARY:Test task", "SUMMARY:Renamed on the phone");
+    fs::write(&path, &phone).unwrap();
+
+    s.app.handle_key(key('e'));
+    assert_eq!(
+        s.app.input.as_ref().unwrap().buffer,
+        "Test task",
+        "the prompt shows what was loaded"
+    );
+    type_text(&mut s.app, "!");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(
+        s.app
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("changed on disk"),
+        "{:?}",
+        s.app.message
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        phone,
+        "the phone's rename survives"
+    );
+    assert!(
+        s.app
+            .tasks
+            .iter()
+            .any(|t| t.summary == "Renamed on the phone"),
+        "reloaded"
+    );
+    s.app.handle_key(code(KeyCode::Esc));
+
+    let recurring = phone.replace(
+        "SUMMARY:Renamed on the phone",
+        "RRULE:FREQ=WEEKLY\nSUMMARY:Now weekly",
+    );
+    fs::write(&path, &recurring).unwrap();
+    s.app.handle_key(key('d'));
+    assert!(
+        !fs::read_to_string(&path).unwrap().contains("COMPLETED"),
+        "no completion on a task the phone made recurring"
+    );
+    s.app.handle_key(key('d'));
+    assert!(
+        s.app.message.as_deref().unwrap().contains("phone"),
+        "after the reload the refusal applies: {:?}",
+        s.app.message
+    );
+}
+
+#[test]
+fn external_changes_are_picked_up_by_polling() {
+    let mut s = sample();
+    let path = s.dir.path().join("life/all-day.ics");
+    let tmp = s.dir.path().join("life/all-day.ics.tmp");
+    let edited = fs::read_to_string(&path)
+        .unwrap()
+        .replace("SUMMARY:Have fun", "SUMMARY:Have more fun");
+    thread::sleep(Duration::from_millis(20));
+    fs::write(&tmp, edited).unwrap();
+    fs::rename(&tmp, &path).unwrap();
+    s.app.poll();
+    assert!(
+        s.app.tasks.iter().any(|t| t.summary == "Have more fun"),
+        "a rename into the vdir reloads"
+    );
+    fs::remove_file(&path).unwrap();
+    s.app.poll();
+    assert!(
+        !s.app.tasks.iter().any(|t| t.summary == "Have more fun"),
+        "a removed file reloads"
+    );
+}
+
+#[test]
+fn unchanged_prompts_leave_no_trace() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    let before = file(&s, "life/no-due.ics");
+    for k in ['e', 'T', 't'] {
+        s.app.handle_key(key(k));
+        s.app.handle_key(code(KeyCode::Enter));
+        assert_eq!(s.app.mode, Mode::Normal);
+        assert_eq!(s.app.message, None, "{k}");
+    }
+    assert_eq!(file(&s, "life/no-due.ics"), before);
+    s.app.handle_key(key('u'));
+    assert_eq!(s.app.message.as_deref(), Some("Nothing to undo"));
+
+    // Tasks.org writes seconds; opening and closing the due prompt keeps them.
+    select(&mut s.app, "1315299692917196932");
+    let before = file(&s, "argot/timed-alarms-repeat.ics");
+    s.app.handle_key(key('t'));
+    assert!(s.app.input.as_ref().unwrap().buffer.ends_with(" 13:00"));
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(file(&s, "argot/timed-alarms-repeat.ics"), before);
+    s.app.apply_notes("1315299692917196932", "");
+    assert_eq!(
+        file(&s, "argot/timed-alarms-repeat.ics"),
+        before,
+        "no notes to no notes"
+    );
+}
+
+#[test]
+fn tags_with_spaces_survive_the_prompt() {
+    let mut s = sample();
+    let path = s.dir.path().join("life/no-due.ics");
+    let tagged = fs::read_to_string(&path).unwrap().replace(
+        "SUMMARY:Test task",
+        "CATEGORIES:Home improvement,urgent\nSUMMARY:Test task",
+    );
+    fs::write(&path, tagged).unwrap();
+    s.app.reload();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('T'));
+    assert_eq!(
+        s.app.input.as_ref().unwrap().buffer,
+        "Home improvement, urgent"
+    );
+    type_text(&mut s.app, ", new one");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(file(&s, "life/no-due.ics").contains("CATEGORIES:Home improvement,urgent,new one\n"));
+}
+
+#[test]
+fn due_prefill_ignores_the_display_time_format() {
+    let mut s = sample_with(|c| c.time_format = "%I:%M %p".to_string());
+    select(&mut s.app, "18137A41-46DD-4CC3-AD7B-B606DB130741");
+    let before = file(&s, "life/timed-alarm.ics");
+    s.app.handle_key(key('t'));
+    let buffer = s.app.input.as_ref().unwrap().buffer.clone();
+    assert!(
+        buffer.starts_with("2026-08-31 ") && !buffer.contains('M'),
+        "{buffer}"
+    );
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(file(&s, "life/timed-alarm.ics"), before);
+}
+
+#[test]
+fn clearing_a_due_date_drops_relative_alarms_but_keeps_absolute_ones() {
+    let mut s = sample();
+    select(&mut s.app, "AF400CA3-DCAA-4DC1-ACDF-0F5E6E981C1D");
+    s.app.handle_key(key('t'));
+    clear_input(&mut s.app);
+    type_text(&mut s.app, "fri 10:00");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(
+        file(&s, "life/all-day.ics").matches("BEGIN:VALARM").count(),
+        3
+    );
+    s.app.handle_key(key('t'));
+    clear_input(&mut s.app);
+    s.app.handle_key(code(KeyCode::Enter));
+    let text = file(&s, "life/all-day.ics");
+    assert!(
+        !text.contains("VALARM") && !text.contains("\nDUE"),
+        "{text}"
+    );
+
+    select(&mut s.app, "18137A41-46DD-4CC3-AD7B-B606DB130741");
+    s.app.handle_key(key('t'));
+    clear_input(&mut s.app);
+    s.app.handle_key(code(KeyCode::Enter));
+    let text = file(&s, "life/timed-alarm.ics");
+    assert!(
+        text.contains("TRIGGER;VALUE=DATE-TIME:20260831T102500Z"),
+        "absolute alarm kept:\n{text}"
+    );
+
+    select(&mut s.app, "1315299692917196932");
+    s.app.handle_key(key('t'));
+    clear_input(&mut s.app);
+    type_text(&mut s.app, "2026-09-10 12:00");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(
+        file(&s, "argot/timed-alarms-repeat.ics")
+            .matches("BEGIN:VALARM")
+            .count(),
+        3,
+        "existing alarms are kept"
+    );
+}
+
+#[test]
+fn the_picker_moves_the_task_m_was_pressed_on() {
+    let mut s = sample();
+    let argot_before = fs::read_dir(s.dir.path().join("argot")).unwrap().count();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('m'));
+    fs::remove_file(s.dir.path().join("life/no-due.ics")).unwrap();
+    s.app.reload();
+    s.app.handle_key(key('k'));
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(
+        s.app.message.as_deref().unwrap().contains(TEST_TASK),
+        "{:?}",
+        s.app.message
+    );
+    assert_eq!(
+        fs::read_dir(s.dir.path().join("argot")).unwrap().count(),
+        argot_before,
+        "nothing else moved"
+    );
+}
+
+#[test]
+fn deleting_from_the_detail_returns_to_the_list() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(code(KeyCode::Enter));
+    s.app.handle_key(key('x'));
+    s.app.handle_key(key('y'));
+    assert_eq!(s.app.mode, Mode::Normal);
+}
+
+#[test]
+fn undoing_a_move_keeps_the_task_when_the_way_back_is_gone() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('m'));
+    s.app.handle_key(key('k'));
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(s.dir.path().join("argot/no-due.ics").exists());
+    fs::remove_dir_all(s.dir.path().join("life")).unwrap();
+    s.app.handle_key(key('u'));
+    assert!(
+        s.app.message.as_deref().unwrap().contains("life"),
+        "{:?}",
+        s.app.message
+    );
+    assert!(
+        s.dir.path().join("argot/no-due.ics").exists(),
+        "a failed undo loses nothing"
+    );
+}
+
+#[test]
+fn a_failed_prompt_keeps_its_text() {
+    let mut s = sample();
+    s.app.view_index = 4;
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "reply to @jacob about lunch");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Input);
+    assert_eq!(
+        s.app.input.as_ref().unwrap().buffer,
+        "reply to @jacob about lunch"
+    );
+    assert!(s.app.message.as_deref().unwrap().contains("jacob"));
+    for _ in 0..18 {
+        s.app.handle_key(code(KeyCode::Backspace));
+    }
+    type_text(&mut s.app, "about lunch");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Normal);
+    assert_eq!(
+        s.app.message.as_deref(),
+        Some("Added: reply to about lunch")
+    );
 }

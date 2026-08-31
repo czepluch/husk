@@ -68,6 +68,8 @@ pub enum Bucket {
 pub struct Input {
     pub kind: InputKind,
     pub buffer: String,
+    /// What the buffer started as; an unchanged prompt changes nothing.
+    pub initial: String,
     /// The task being edited; none for quick add.
     pub uid: Option<String>,
 }
@@ -105,13 +107,16 @@ pub struct App {
     pub input: Option<Input>,
     /// UID and summary of the task a delete is waiting on.
     pub confirm: Option<(String, String)>,
-    /// Cursor in the project picker.
+    /// Cursor in the project picker, and the task it will move.
     pub pick_index: usize,
+    pick_uid: Option<String>,
     /// Shown in the bar until the next key.
     pub message: Option<String>,
     undo: Vec<Undo>,
     editor_request: Option<(String, String)>,
     seen_runs: u64,
+    /// The store's change stamp at the last reload.
+    stamp: u64,
     pub now: DateTime<Local>,
     pub quit: bool,
 }
@@ -121,7 +126,10 @@ impl App {
     pub fn new(config: Config, store: Box<dyn Store>, now: DateTime<Local>) -> Result<Self> {
         let projects = store.projects()?;
         let tasks = store.tasks(None)?;
+        let stamp = store.stamp().unwrap_or(0);
         let syncer = Syncer::new(config.sync_command.clone());
+        // Pick up what the phones did since the last run.
+        syncer.request();
         Ok(Self {
             config,
             store,
@@ -141,10 +149,12 @@ impl App {
             input: None,
             confirm: None,
             pick_index: 0,
+            pick_uid: None,
             message: None,
             undo: Vec::new(),
             editor_request: None,
             seen_runs: 0,
+            stamp,
             now,
             quit: false,
         })
@@ -244,16 +254,31 @@ impl App {
         !self.config.sync_command.is_empty()
     }
 
-    /// Reloads from the store once a sync run has finished since last time.
-    pub fn poll_sync(&mut self) {
+    /// Reloads when the store changed underneath (a vdirsyncer run husk did
+    /// not start, a hand edit) or when a sync run this app asked for ended.
+    pub fn poll(&mut self) {
         let state = self.syncer.state();
-        if state.runs != self.seen_runs {
+        let finished = state.runs != self.seen_runs;
+        let changed = self.store.stamp().is_ok_and(|stamp| stamp != self.stamp);
+        if finished || changed {
             self.seen_runs = state.runs;
             self.reload();
-            if let Some(error) = state.last_error {
-                self.message = Some(error);
-            }
         }
+        if finished
+            && let Some(error) = state.last_error
+            && self.message.is_none()
+        {
+            self.message = Some(error);
+        }
+    }
+
+    pub fn sync_busy(&self) -> bool {
+        self.syncer.busy()
+    }
+
+    /// Waits for a pending or running sync; false when it did not finish in time.
+    pub fn flush_sync(&self, timeout: std::time::Duration) -> bool {
+        self.syncer.flush(timeout)
     }
 
     /// The notes edit the run loop should perform, if any: UID and current text.
@@ -376,18 +401,22 @@ impl App {
             }
             KeyCode::Char('T') => {
                 if let Some(task) = self.selected_task() {
-                    let (uid, text) = (task.uid.clone(), task.tags.join(" "));
+                    let (uid, text) = (task.uid.clone(), task.tags.join(", "));
                     self.start_input(InputKind::Tags, text, Some(uid));
                 }
             }
             KeyCode::Char('p') => self.cycle_priority(),
             KeyCode::Char('m') => {
-                if let Some(task) = self.selected_task() {
+                let target = self
+                    .selected_task()
+                    .map(|t| (t.uid.clone(), t.project.clone()));
+                if let Some((uid, project)) = target {
                     self.pick_index = self
                         .projects
                         .iter()
-                        .position(|p| p.id == task.project)
+                        .position(|p| p.id == project)
                         .unwrap_or(0);
+                    self.pick_uid = Some(uid);
                     self.return_to = self.mode;
                     self.mode = Mode::Pick;
                 }
@@ -410,7 +439,12 @@ impl App {
     }
 
     fn start_input(&mut self, kind: InputKind, buffer: String, uid: Option<String>) {
-        self.input = Some(Input { kind, buffer, uid });
+        self.input = Some(Input {
+            kind,
+            initial: buffer.clone(),
+            buffer,
+            uid,
+        });
         self.return_to = self.mode;
         self.mode = Mode::Input;
     }
@@ -432,30 +466,32 @@ impl App {
     }
 
     fn input_key(&mut self, key: KeyEvent) {
-        let Some(input) = self.input.as_mut() else {
+        let Some(mut input) = self.input.take() else {
             self.mode = Mode::Normal;
             return;
         };
         match key.code {
-            KeyCode::Esc => {
-                self.input = None;
-                self.mode = self.return_to;
-            }
-            KeyCode::Enter => {
-                let input = self.input.take().unwrap_or_else(|| Input {
-                    kind: InputKind::QuickAdd,
-                    buffer: String::new(),
-                    uid: None,
-                });
-                self.mode = self.return_to;
-                let result = self.submit(&input);
-                self.report(result);
-            }
+            KeyCode::Esc => self.mode = self.return_to,
+            KeyCode::Enter => match self.submit(&input) {
+                Ok(text) => {
+                    self.mode = self.return_to;
+                    self.report(Ok(text));
+                }
+                // The prompt stays open with its text so the mistake can be fixed.
+                Err(e) => {
+                    self.message = Some(format!("{e:#}"));
+                    self.input = Some(input);
+                }
+            },
             KeyCode::Backspace => {
                 input.buffer.pop();
+                self.input = Some(input);
             }
-            KeyCode::Char(c) if plain(key) => input.buffer.push(c),
-            _ => {}
+            KeyCode::Char(c) if plain(key) => {
+                input.buffer.push(c);
+                self.input = Some(input);
+            }
+            _ => self.input = Some(input),
         }
     }
 
@@ -466,7 +502,8 @@ impl App {
                     let result = self.delete(&uid);
                     self.report(result);
                 }
-                self.mode = self.return_to;
+                // The deleted task's detail would show its neighbour.
+                self.mode = Mode::Normal;
             }
             KeyCode::Char('n' | 'N' | 'q') | KeyCode::Esc => {
                 self.confirm = None;
@@ -486,20 +523,26 @@ impl App {
             }
             KeyCode::Enter => {
                 self.mode = self.return_to;
-                if let (Some(task), Some(project)) =
-                    (self.selected_task(), self.projects.get(self.pick_index))
+                if let (Some(uid), Some(project)) =
+                    (self.pick_uid.take(), self.projects.get(self.pick_index))
                 {
-                    let (uid, project) = (task.uid.clone(), project.id.clone());
+                    let project = project.id.clone();
                     let result = self.move_task_to(&uid, &project);
                     self.report(result);
                 }
             }
-            KeyCode::Esc | KeyCode::Char('q') => self.mode = self.return_to,
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.pick_uid = None;
+                self.mode = self.return_to;
+            }
             _ => {}
         }
     }
 
     fn submit(&mut self, input: &Input) -> Result<String> {
+        if input.kind != InputKind::QuickAdd && input.buffer == input.initial {
+            return Ok(String::new());
+        }
         match (input.kind, &input.uid) {
             (InputKind::QuickAdd, _) => self.quick_add(&input.buffer),
             (InputKind::Summary, Some(uid)) => {
@@ -526,17 +569,24 @@ impl App {
                 let leads = self.config.default_alarm_leads.clone();
                 self.change(uid, "Due set", move |task| {
                     task.due = due;
-                    // A timed due date notifies on the phones only through an alarm.
-                    if matches!(due, Some(Due::DateTime(_))) && task.alarms.is_empty() {
-                        task.alarms = default_alarms(&leads);
+                    match due {
+                        // A timed due date notifies on the phones only through an alarm.
+                        Some(Due::DateTime(_)) if task.alarms.is_empty() => {
+                            task.alarms = default_alarms(&leads);
+                        }
+                        // Relative alarms have nothing left to count from.
+                        None => task
+                            .alarms
+                            .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
+                        _ => {}
                     }
                     Ok(())
                 })
             }
             (InputKind::Tags, Some(uid)) => {
                 let mut tags: Vec<String> = Vec::new();
-                for tag in input.buffer.split_whitespace() {
-                    let tag = tag.trim_start_matches('#').to_string();
+                for tag in input.buffer.split(',') {
+                    let tag = tag.trim().trim_start_matches('#').trim().to_string();
                     if !tag.is_empty() && !tags.contains(&tag) {
                         tags.push(tag);
                     }
@@ -637,18 +687,31 @@ impl App {
         self.report(result);
     }
 
-    /// Re-reads the task, applies a change, saves, remembers the previous
-    /// state for undo, reloads and asks for a sync.
+    /// Applies a change to the task as the user saw it and saves. The store
+    /// refuses when the file changed underneath in the meantime; the list is
+    /// then reloaded so the next attempt starts from what is there. A save
+    /// that changes nothing leaves no undo entry and triggers no sync.
     fn change(
         &mut self,
         uid: &str,
         label: &str,
         apply: impl FnOnce(&mut Task) -> Result<()>,
     ) -> Result<String> {
-        let mut task = self.store.get(uid)?;
+        let mut task = self
+            .tasks
+            .iter()
+            .find(|t| t.uid == uid)
+            .cloned()
+            .with_context(|| format!("task {uid} is no longer listed"))?;
         let before = task.clone();
         apply(&mut task)?;
-        self.store.save(&mut task)?;
+        if let Err(e) = self.store.save(&mut task) {
+            self.reload();
+            return Err(e);
+        }
+        if task.raw == before.raw {
+            return Ok(String::new());
+        }
         self.push_undo(Undo::Restore(Box::new(before)));
         self.after_write(Some(uid));
         Ok(format!("{label}: {}", task.summary))
@@ -682,18 +745,18 @@ impl App {
         let result = match entry {
             Undo::Restore(task) => {
                 let uid = task.uid.clone();
-                // A moved task must be removed from where it went first.
-                let elsewhere = self
+                // A moved task goes back the way it came (write, then delete)
+                // before its old content is written over it.
+                let moved_away = self
                     .store
                     .get(&uid)
-                    .ok()
-                    .filter(|current| current.project != task.project);
-                let outcome = match elsewhere {
-                    Some(_) => self
-                        .store
-                        .delete(&uid)
-                        .and_then(|()| self.store.restore(&task)),
-                    None => self.store.restore(&task),
+                    .is_ok_and(|current| current.project != task.project);
+                let outcome = if moved_away {
+                    self.store
+                        .move_to(&uid, &task.project)
+                        .and_then(|()| self.store.restore(&task))
+                } else {
+                    self.store.restore(&task)
                 };
                 outcome.map(|restored| {
                     self.after_write(Some(&uid));
@@ -724,6 +787,7 @@ impl App {
     }
 
     pub fn reload(&mut self) {
+        self.stamp = self.store.stamp().unwrap_or(self.stamp);
         match self.store.tasks(None) {
             Ok(tasks) => self.tasks = tasks,
             Err(e) => self.message = Some(format!("{e:#}")),
@@ -802,13 +866,13 @@ fn step(index: usize, delta: isize, len: usize) -> usize {
 
 /// The text the due prompt starts with: what the task has now, in the
 /// forms the prompt reads back.
-pub fn due_input(due: Option<Due>, config: &Config) -> String {
+pub fn due_input(due: Option<Due>, _config: &Config) -> String {
     match due {
         None => String::new(),
         Some(Due::Date(date)) => date.format("%Y-%m-%d").to_string(),
         Some(Due::DateTime(at)) => at
             .with_timezone(&Local)
-            .format(&format!("%Y-%m-%d {}", config.time_format))
+            .format("%Y-%m-%d %H:%M")
             .to_string(),
     }
 }

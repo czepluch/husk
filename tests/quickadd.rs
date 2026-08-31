@@ -92,6 +92,8 @@ fn tags_projects_and_priority() {
     assert_eq!(q.priority, Priority::High, "the last priority wins");
     assert_eq!(parse("x pri:M").priority, Priority::Medium);
     assert_eq!(parse("x pri:low").priority, Priority::Low);
+    assert_eq!(parse("x Pri:M Due:fri").priority, Priority::Medium);
+    assert_eq!(parse("x Pri:M Due:fri").due, Some(date(2026, 9, 4)));
 }
 
 #[test]

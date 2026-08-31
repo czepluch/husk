@@ -528,7 +528,7 @@ fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
             "due",
             "  today | fri | +2d | 2026-09-03, optional HH:MM; empty clears",
         ),
-        InputKind::Tags => ("tags", "  space separated"),
+        InputKind::Tags => ("tags", "  comma separated"),
     };
     Line::from(vec![
         Span::styled(format!(" {prompt}> "), theme.help_key),

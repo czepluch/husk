@@ -6,6 +6,7 @@
 //! clients decide which side wins.
 
 use std::fs::{self, File};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -178,6 +179,19 @@ impl Store for VdirStore {
     fn delete(&self, uid: &str) -> Result<()> {
         let (path, _) = self.locate(uid)?;
         fs::remove_file(&path).with_context(|| format!("delete {}", path.display()))
+    }
+
+    /// Directory mtimes: every file vdirsyncer or husk writes lands by
+    /// rename, which touches the directory, so this moves on every change.
+    fn stamp(&self) -> Result<u64> {
+        let mut hasher = DefaultHasher::new();
+        for id in self.project_ids()? {
+            let dir = self.project_dir(&id);
+            let modified = fs::metadata(&dir).and_then(|m| m.modified())?;
+            id.hash(&mut hasher);
+            modified.hash(&mut hasher);
+        }
+        Ok(hasher.finish())
     }
 
     fn restore(&self, task: &Task) -> Result<Task> {

@@ -340,8 +340,8 @@ fn new_document_round_trips_through_the_reader() {
         "PRIORITY:1",
         "CATEGORIES:health",
         "ACTION:DISPLAY",
-        "TRIGGER:PT0S",
-        "TRIGGER:-PT1H",
+        "TRIGGER;RELATED=END:PT0S",
+        "TRIGGER;RELATED=END:-PT1H",
     ] {
         assert!(
             text.contains(&format!("{line}\r\n")),
@@ -487,7 +487,7 @@ fn alarm_edits_keep_untouched_alarms_byte_for_byte() {
     added.sort();
     assert_eq!(
         added,
-        vec!["DESCRIPTION:Remember the milk", "TRIGGER:-PT1H"]
+        vec!["DESCRIPTION:Remember the milk", "TRIGGER;RELATED=END:-PT1H"]
     );
     assert_eq!(
         vtodo::parse_task(&after, ProjectId::new("p"))

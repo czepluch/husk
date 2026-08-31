@@ -2,6 +2,7 @@
 //! debounced so a burst of edits becomes one run, and on demand from `s`.
 
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -26,6 +27,9 @@ pub struct SyncState {
 pub struct Syncer {
     tx: Sender<()>,
     state: Arc<Mutex<SyncState>>,
+    /// A request has been made that no run has picked up yet.
+    pending: Arc<AtomicBool>,
+    enabled: bool,
 }
 
 impl Syncer {
@@ -33,23 +37,52 @@ impl Syncer {
     pub fn new(command: Vec<String>) -> Self {
         let (tx, rx) = channel();
         let state = Arc::new(Mutex::new(SyncState::default()));
-        if !command.is_empty() {
+        let pending = Arc::new(AtomicBool::new(false));
+        let enabled = !command.is_empty();
+        if enabled {
             let worker_state = Arc::clone(&state);
-            thread::spawn(move || worker(&rx, &command, &worker_state));
+            let worker_pending = Arc::clone(&pending);
+            thread::spawn(move || worker(&rx, &command, &worker_state, &worker_pending));
         }
-        Self { tx, state }
+        Self {
+            tx,
+            state,
+            pending,
+            enabled,
+        }
     }
 
     pub fn request(&self) {
-        let _ = self.tx.send(());
+        if self.enabled {
+            self.pending.store(true, Ordering::SeqCst);
+            let _ = self.tx.send(());
+        }
     }
 
     pub fn state(&self) -> SyncState {
         self.state.lock().map(|s| s.clone()).unwrap_or_default()
     }
+
+    /// Whether a run is waiting to start or in progress.
+    pub fn busy(&self) -> bool {
+        self.pending.load(Ordering::SeqCst) || self.state().running
+    }
+
+    /// Waits for pending and running work to finish, so a write made just
+    /// before quitting still reaches the server. Returns false on timeout.
+    pub fn flush(&self, timeout: Duration) -> bool {
+        let start = Instant::now();
+        while self.busy() {
+            if start.elapsed() > timeout {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        true
+    }
 }
 
-fn worker(rx: &Receiver<()>, command: &[String], state: &Mutex<SyncState>) {
+fn worker(rx: &Receiver<()>, command: &[String], state: &Mutex<SyncState>, pending: &AtomicBool) {
     while rx.recv().is_ok() {
         thread::sleep(DEBOUNCE);
         while rx.try_recv().is_ok() {}
@@ -57,6 +90,7 @@ fn worker(rx: &Receiver<()>, command: &[String], state: &Mutex<SyncState>) {
         if let Ok(mut s) = state.lock() {
             s.running = true;
         }
+        pending.store(false, Ordering::SeqCst);
         let outcome = run(command);
         if let Ok(mut s) = state.lock() {
             s.running = false;

@@ -19,6 +19,12 @@ pub fn run(mut app: App, theme: &Theme) -> Result<()> {
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, &mut app, theme);
     ratatui::restore();
+    if app.sync_busy() {
+        eprintln!("husk: waiting for the sync to finish");
+        if !app.flush_sync(Duration::from_secs(30)) {
+            eprintln!("husk: sync still running; it continues in the background");
+        }
+    }
     result
 }
 
@@ -42,7 +48,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, theme: &Theme) -> R
             }
         }
         app.now = Local::now();
-        app.poll_sync();
+        app.poll();
     }
     Ok(())
 }
@@ -63,7 +69,7 @@ pub fn edit_with_editor(text: &str) -> Result<String> {
 /// Runs one editor command on a temp file holding `text`.
 pub fn edit_with(editor: &str, text: &str) -> Result<String> {
     let path = std::env::temp_dir().join(format!("husk-notes-{}.md", std::process::id()));
-    std::fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
+    write_private(&path, text).with_context(|| format!("write {}", path.display()))?;
     // Through the shell so an editor setting with arguments ("code --wait") works.
     let status = Command::new("sh")
         .arg("-c")
@@ -81,4 +87,17 @@ pub fn edit_with(editor: &str, text: &str) -> Result<String> {
     };
     let _ = std::fs::remove_file(&path);
     result
+}
+
+/// Writes a file readable by the owner only; notes are private.
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(text.as_bytes())
 }

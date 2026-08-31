@@ -33,12 +33,13 @@ pub fn parse(input: &str, now: DateTime<Local>) -> QuickAdd {
             i += 1;
             continue;
         }
-        if let Some(priority) = token.strip_prefix("pri:").and_then(parse_priority) {
+        let lower = token.to_ascii_lowercase();
+        if let Some(priority) = lower.strip_prefix("pri:").and_then(parse_priority) {
             out.priority = priority;
             i += 1;
             continue;
         }
-        if let Some(value) = token.strip_prefix("due:")
+        if let Some(value) = lower.strip_prefix("due:")
             && let Some((due, consumed)) = parse_due(value, &tokens[i + 1..], now)
         {
             out.due = Some(due);
