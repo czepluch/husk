@@ -92,14 +92,17 @@ pub struct Task {
     pub project: ProjectId,       // collection dir name
     pub summary: String,
     pub description: Option<String>,
-    pub due: Option<Due>,         // Due::Date(NaiveDate) | Due::DateTime(DateTime<Tz>)
+    pub due: Option<Due>,         // Due::Date(NaiveDate) | Due::DateTime(DateTime<Utc>)
+    pub start: Option<Due>,       // DTSTART, read only; anchors RELATED=START alarms
     pub status: Status,
-    pub priority: Priority,       // None | High | Medium | Low (+ raw u8 for odd values)
+    pub completed: Option<DateTime<Utc>>,
+    pub priority: Priority,       // High | Medium | Low | None, from the RFC ranges 1-4, 5, 6-9, 0
     pub tags: Vec<String>,
-    pub alarms: Vec<Alarm>,       // Alarm::Absolute(DateTime<Utc>) | Alarm::Relative(Duration)
-    pub rrule: Option<String>,    // raw, plus a derived human string
+    pub alarms: Vec<Alarm>,       // Absolute(DateTime<Utc>) | Relative { offset, anchor: Due | Start }
+    pub rrule: Option<String>,    // raw; the human string is derived when displayed
     pub parent: Option<String>,
-    raw: IcalComponent,           // untouched properties, for round-trip
+    pub created: Option<DateTime<Utc>>,
+    raw: Document,                // the whole file, for round-trip
 }
 ```
 
@@ -173,7 +176,7 @@ husk runs `vdirsyncer sync` (configurable command) in a background thread after 
 
 Idempotent by construction: running it twice in a row fires nothing the second time; missing a few runs (laptop asleep) fires everything that came due since `last_run` once, on wake.
 
-Writing alarms: when the TUI creates or sets a timed due date, it adds `VALARM` with `TRIGGER:-PT0M` (at due) by default, plus any lead times from config. This is what makes a task created in the terminal notify on the phone. Apple Reminders fires from the alarm, not the due date, so this is not optional if phone notifications matter. Tasks.org honors the same alarm.
+Writing alarms: when the TUI creates or sets a timed due date, it adds `VALARM` with `TRIGGER:PT0S` (at due) by default, plus any lead times from config. This is what makes a task created in the terminal notify on the phone. Apple Reminders fires from the alarm, not the due date, so this is not optional if phone notifications matter. Tasks.org honors the same alarm.
 
 ## 7. TUI
 
