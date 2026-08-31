@@ -3,3 +3,4 @@
 
 pub mod ical;
 pub mod model;
+pub mod store;

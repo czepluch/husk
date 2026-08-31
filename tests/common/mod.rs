@@ -34,3 +34,64 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(PathBuf, String)>) {
         }
     }
 }
+
+/// A directory under the system temp dir, removed on drop.
+pub struct TempDir(PathBuf);
+
+impl TempDir {
+    pub fn new() -> Self {
+        let path = std::env::temp_dir().join(format!("husk-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&path).expect("create temp dir");
+        Self(path)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A vdir with three projects: `life` (Apple and todoman fixtures, minus the
+/// duplicate UID, with name and color files), `argot` (Tasks.org fixtures, name only) and `solidity`
+/// (empty, no metadata files). Fixture file names are kept, so most files
+/// are not named after their UID.
+pub fn fixture_vdir() -> TempDir {
+    let dir = TempDir::new();
+    for (project, name, color) in [
+        ("life", Some("Life"), Some("#83D754")),
+        ("argot", Some("Argot"), None),
+        ("solidity", None, None),
+    ] {
+        let path = dir.path().join(project);
+        fs::create_dir(&path).unwrap();
+        if let Some(name) = name {
+            fs::write(path.join("displayname"), format!("{name}\n")).unwrap();
+        }
+        if let Some(color) = color {
+            fs::write(path.join("color"), format!("{color}\n")).unwrap();
+        }
+    }
+    // completed.ics is the same task as no-due.ics after completion, so the
+    // two share a UID. A vdir never holds two files with one UID.
+    for (rel, text) in fixtures() {
+        if rel.ends_with("completed.ics") {
+            continue;
+        }
+        let project = if rel.starts_with("tasksorg") {
+            "argot"
+        } else {
+            "life"
+        };
+        fs::write(
+            dir.path().join(project).join(rel.file_name().unwrap()),
+            text,
+        )
+        .unwrap();
+    }
+    dir
+}
