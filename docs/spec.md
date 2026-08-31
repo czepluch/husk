@@ -71,15 +71,16 @@ Properties husk reads and writes:
 | `UID` | uuid v4, set on create, never changed |
 | `SUMMARY` | title |
 | `DESCRIPTION` | notes, multi-line |
-| `DUE` | `DATE` for all-day, `DATE-TIME` with `TZID` for timed. Floating times are treated as local |
-| `STATUS` | `NEEDS-ACTION`, `IN-PROCESS`, `COMPLETED`, `CANCELLED` |
+| `DUE` | `DATE` for all-day. Timed values are read as `DATE-TIME` with `TZID`, as UTC (`Z`), or floating (treated as local). New timed values written by husk are UTC, so husk never has to generate a `VTIMEZONE`; edits keep the form the file already uses (Apple writes `TZID` plus a `VTIMEZONE` component, preserved like any other component) |
+| `DTSTART` | Not modelled. Apple writes it equal to `DUE` on every dated task; Tasks.org writes it as a separate start date. When `DUE` changes: if `DTSTART` equals the old `DUE`, move it too; otherwise leave it unless it would end up after the new `DUE`, in which case clamp it to `DUE`. Never add it |
+| `STATUS` | `NEEDS-ACTION`, `IN-PROCESS`, `COMPLETED`, `CANCELLED`. Tasks.org omits it on new tasks; missing means `NEEDS-ACTION` |
 | `COMPLETED` | UTC timestamp, set together with `STATUS:COMPLETED` and `PERCENT-COMPLETE:100` (Apple writes all three) |
 | `PRIORITY` | 1 high, 5 medium, 9 low, 0 none. Both phone apps use these values |
 | `CATEGORIES` | tags |
 | `RRULE` | read only in v1, shown as text |
-| `VALARM` | `ACTION:DISPLAY`, `TRIGGER` absolute (`VALUE=DATE-TIME`) or relative to `DUE` |
-| `RELATED-TO;RELTYPE=PARENT` | subtask link, read only in v1 |
-| `SEQUENCE`, `LAST-MODIFIED`, `DTSTAMP`, `CREATED` | bumped or set on every write |
+| `VALARM` | `ACTION:DISPLAY`, `TRIGGER` absolute (`VALUE=DATE-TIME`, Apple writes these in UTC) or relative: `RELATED=END` or no parameter means relative to `DUE`, `RELATED=START` relative to `DTSTART`. Tasks.org writes three alarms per dated task including a repeating one (`DURATION` plus `REPEAT`); v1 fires each alarm's first trigger only and ignores `REPEAT`. Apple adds `UID` and `X-WR-ALARMUID` inside the alarm; preserve everything |
+| `RELATED-TO;RELTYPE=PARENT` | subtask link, read only in v1. Tasks.org writes `RELATED-TO` with no `RELTYPE` at all; missing means `PARENT` |
+| `SEQUENCE`, `LAST-MODIFIED`, `DTSTAMP`, `CREATED` | bumped or set on every write. Apple omits `SEQUENCE` on new tasks; a missing value counts as 0 |
 
 Invariant: every property husk does not understand, including `X-APPLE-*` and `X-MOZ-*`, is preserved verbatim on write. The codec parses the component into an ordered property list, the model is a view over it, and saving patches only the properties husk changed. Without this, Apple sort order and Tasks.org metadata get destroyed on the first edit and both phone apps behave strangely.
 
@@ -122,7 +123,8 @@ pub trait Store {
 - On every save: `SEQUENCE += 1`, `LAST-MODIFIED` and `DTSTAMP` = now (UTC). Phone clients use these to decide which side wins.
 - Move between projects = write into the new directory, delete from the old one, same UID. vdirsyncer handles this as delete plus create on the server, which is what CalDAV expects.
 - Delete = remove the file. Offer a session-level undo by keeping the last N removed or overwritten file contents in memory.
-- Line folding at 75 octets, CRLF line endings, escape `,` `;` `\` and newlines in text values. Unfold on read. Get this right once, in one place, with tests.
+- Line folding at 75 octets, escape `,` `;` `\` and newlines in text values. Unfold on read. Get this right once, in one place, with tests.
+- Line endings: Radicale stores CRLF but vdirsyncer writes LF into the vdir, while files written locally (todoman, husk) keep whatever their author used, so the vdir is mixed. Accept both on read, write back whatever the file used, and use CRLF for new files. This is what keeps an unmodified save byte-identical.
 
 The UI and CLI never touch the filesystem. Everything goes through `Store`, which is what makes the later CalDAV backend a drop-in.
 
@@ -131,6 +133,9 @@ The UI and CLI never touch the filesystem. Everything goes through `Store`, whic
 vdirsyncer config (`~/.config/vdirsyncer/config`):
 
 ```ini
+[general]
+status_path = "~/.local/share/vdirsyncer/status/"
+
 [pair tasks]
 a = "tasks_local"
 b = "tasks_remote"
@@ -155,7 +160,7 @@ item_types = ["VTODO"]
 
 The password sits in the config file itself, `chmod 600`. A `pass` or keyring lookup needs an unlocked gpg-agent or secret service every time the systemd timer fires, which fails quietly after a reboot until something prompts for the key. A mode-600 file in the home directory is the same trust boundary as the vdir it syncs.
 
-husk runs `vdirsyncer sync` (configurable command) in a background thread after every mutation, debounced to one run per two seconds, and on the `s` key. A systemd user timer every five minutes is the backstop and also picks up phone edits. `vdirsyncer discover` must run once whenever a list is created on a phone; `husk sync --discover` wraps it.
+husk runs `vdirsyncer sync` (configurable command) in a background thread after every mutation, debounced to one run per two seconds, and on the `s` key. A systemd user timer every five minutes is the backstop and also picks up phone edits. `vdirsyncer discover` followed by `vdirsyncer metasync` must run whenever a list is created or renamed on a phone, because `sync` alone never carries `displayname` and `color`; `husk sync --discover` wraps both. The Arch package ships `vdirsyncer.timer` at 15 minutes; a drop-in sets `OnUnitActiveSec=5m`.
 
 ## 6. Notifications
 
@@ -317,7 +322,7 @@ default_alarm_leads = ["1d", "1h", "0m"]
 
 M0, half a day: infrastructure. Radicale on the DappNode behind the HTTPS portal, `rights = owner_only`, bcrypt htpasswd. Add the account on iPhone (Settings, Calendar accounts, CalDAV, Reminders on) and Tasks.org on Android. vdirsyncer config and timer. Verify the round trip by hand with todoman. Before writing any Rust, save a handful of `.ics` files as produced by each phone app into `tests/fixtures/`; these are the real spec.
 
-M0 without the DappNode: until a DappNode package exists, run Radicale on the laptop (`radicale` and `python-bcrypt` from the Arch repos, `hosts = 0.0.0.0:5232`, otherwise the same config), open port 5232 to the LAN in ufw, and point the phones at `http://<laptop-lan-ip>:5232/`; iOS offers a non-SSL fallback when it cannot negotiate TLS. vdirsyncer uses `http://localhost:5232/`. Radicale stores one `.ics` per item under `collections/`, so moving to the DappNode later is copying that directory into the package volume, re-pointing the phones and vdirsyncer at the HTTPS URL, and clearing the pair status under `~/.local/share/vdirsyncer/status/` so vdirsyncer re-pairs items by UID instead of treating the new server as empty. husk never talks to the server, so nothing in it changes; during M1 and M2 `sync_command` can be `["true"]`.
+M0 without the DappNode: until a DappNode package exists, run Radicale on the laptop (`radicale` and `python-bcrypt` from the Arch repos, `hosts = 0.0.0.0:5232`, otherwise the same config) and open port 5232 to the LAN in ufw. Both phone apps refuse Basic auth over cleartext HTTP (iOS silently ignores the 401 challenge, Tasks.org reports "not permitted by network config"), so Radicale needs TLS: make a local CA and a server certificate with openssl, with the laptop's LAN IP in the SAN, SHA-256, a 2048-bit key, `extendedKeyUsage = serverAuth` and at most 825 days validity (what iOS requires of user-installed certificates), and `keyUsage = critical, keyCertSign, cRLSign` on the CA (Python 3.13+ verifies strictly and rejects a CA without it; the phones do not care). Set `ssl = True`, `certificate` and `key` under `[server]`, and install the CA with full trust on each phone. Phones point at `https://<laptop-lan-ip>:5232/`; vdirsyncer uses `https://localhost:5232/` (put `localhost` in the SAN too) with `verify = "<path to ca.crt>"`, or `verify_fingerprint = "<sha256 of server.crt>"` to pin the server certificate instead of validating the chain, so a DHCP change only affects the phones. Radicale stores one `.ics` per item under `collections/`, so moving to the DappNode later is copying that directory into the package volume, re-pointing the phones and vdirsyncer at the HTTPS URL, and clearing the pair status under `~/.local/share/vdirsyncer/status/` so vdirsyncer re-pairs items by UID instead of treating the new server as empty. husk never talks to the server, so nothing in it changes; during M1 and M2 `sync_command` can be `["true"]`.
 
 M1, weekend 1: codec and store. Fold/unfold, escaping, parse, serialize. Round-trip test: for every fixture, parse then serialize must equal the input modulo folding. `VdirStore` with atomic writes, sequence bump, move, delete. Test against a temp dir.
 
@@ -335,7 +340,9 @@ Later, optional: `CaldavStore` implementing `Store` over HTTPS with `reqwest` (P
 
 - Apple Reminders polls CalDAV on a fetch interval (Settings, Accounts, Fetch New Data). Set it to 15 minutes or open the app to force a pull; there is no push for third-party CalDAV.
 - Apple writes `DUE` as `DATE-TIME` with a `TZID`, marks completion with three properties, and adds `X-APPLE-SORT-ORDER` and `X-APPLE-*` alarm metadata. Preserve all of it.
-- Tasks.org writes relative alarm triggers and its own `X-` properties; same rule.
+- Tasks.org writes relative alarm triggers and `X-APPLE-SORT-ORDER` of its own; same rule. It also omits `STATUS` and `CALSCALE`, uses numeric UIDs, and writes timed `DUE` values one second past the minute (`T130001`) to mark "has a time". Display minutes only. A `:00` value written by another client is still shown as timed: a UTC `DUE` with `:00` seconds and no `VTIMEZONE` (as written by todoman) displays at the right local time on both phones, verified 2026-08-31.
+- Apple Reminders on a CalDAV account has no tags, subtasks or flags (iCloud only). A `#tag` typed on the iPhone stays literal text in `SUMMARY`. Tags and subtasks therefore only come from Tasks.org or husk; whether Apple preserves `CATEGORIES` and `RELATED-TO` on a task it edits needs to be checked with a fixture before M3 writes them.
+- Apple keeps properties sorted alphabetically and inserts new ones in order (`COMPLETED` lands before `CREATED`). Order is preserved, never imposed.
 - Radicale stores completed tasks forever. Show them under `Completed` and add `husk purge --older-than 90d` later if the vdir gets big.
 - A floating `DUE` (no `TZID`, no `Z`) is legal and shows up from some clients. Treat as local time.
 - vdirsyncer refuses to run if two files claim the same UID. The store must never create that state; move is write-new-then-delete-old, never copy-then-forget.
