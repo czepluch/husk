@@ -164,7 +164,7 @@ item_types = ["VTODO"]
 
 The password sits in the config file itself, `chmod 600`. A `pass` or keyring lookup needs an unlocked gpg-agent or secret service every time the systemd timer fires, which fails quietly after a reboot until something prompts for the key. A mode-600 file in the home directory is the same trust boundary as the vdir it syncs.
 
-husk runs `vdirsyncer sync` (configurable command) in a background thread after every mutation, debounced to one run per two seconds, and on the `s` key. A systemd user timer every five minutes is the backstop and also picks up phone edits. `vdirsyncer discover` followed by `vdirsyncer metasync` must run whenever a list is created or renamed on a phone, because `sync` alone never carries `displayname` and `color`; `husk sync --discover` wraps both. The Arch package ships `vdirsyncer.timer` at 15 minutes; a drop-in sets `OnUnitActiveSec=5m`.
+husk runs `vdirsyncer sync` (configurable command; empty disables) in a background thread after every mutation, debounced so a burst becomes one run with at most one run per two seconds, and on the `s` key. When a run finishes the TUI reloads the vdir, and the bar shows `syncing`, `synced HH:MM` or the failure. A systemd user timer every five minutes is the backstop and also picks up phone edits. `vdirsyncer discover` followed by `vdirsyncer metasync` must run whenever a list is created or renamed on a phone, because `sync` alone never carries `displayname` and `color`; `husk sync --discover` wraps both. The Arch package ships `vdirsyncer.timer` at 15 minutes; a drop-in sets `OnUnitActiveSec=5m`.
 
 ## 6. Notifications
 
@@ -177,7 +177,7 @@ husk runs `vdirsyncer sync` (configurable command) in a background thread after 
 
 Idempotent by construction: running it twice in a row fires nothing the second time; missing a few runs (laptop asleep) fires everything that came due since `last_run` once, on wake.
 
-Writing alarms: when the TUI creates or sets a timed due date, it adds `VALARM` with `TRIGGER:PT0S` (at due) by default, plus any lead times from config. This is what makes a task created in the terminal notify on the phone. Apple Reminders fires from the alarm, not the due date, so this is not optional if phone notifications matter. Tasks.org honors the same alarm.
+Writing alarms: when the TUI creates a task with a timed due date, or sets a timed due date on a task that has no alarms, it adds one `VALARM` per lead time in `default_alarm_leads` (`0m` is the alarm at due). Existing alarms are never replaced. This is what makes a task created in the terminal notify on the phone. Apple Reminders fires from the alarm, not the due date, so this is not optional if phone notifications matter. Tasks.org honors the same alarm.
 
 ## 7. TUI
 
@@ -199,7 +199,7 @@ Layout, ratatui plus crossterm:
 
 Views: `Today` (due today or overdue, all projects), `Upcoming` (next 7 days), `All`, one per project. `c` toggles completed tasks into the current view, dimmed and sorted last: Today shows what was completed today, Upcoming the last seven days, All and the projects everything. Sort: overdue first, then due time, then priority, then created; undated tasks after dated ones, done tasks last. Recurring tasks show `↻` and a human rule ("weekly", "every 2nd Tuesday"); `d` on one is refused with a one-line hint. Subtasks render indented under their parent.
 
-Keys, vim-flavored: `j`/`k` move, `g`/`G` first/last, `Tab` switch pane, `Enter` detail (in the projects pane: focus the task list), `J`/`K` scroll the detail, `Esc` back or clear the filter, `a` quick add, `d` done, `x` delete (confirm), `u` undo, `e` edit summary, `n` edit notes in `$EDITOR`, `t` due, `p` priority, `T` tags, `m` move project, `/` filter, `s` sync, `c` show completed, `?` help, `q` quit.
+Keys, vim-flavored: `j`/`k` move, `g`/`G` first/last, `Tab` switch pane, `Enter` detail (in the projects pane: focus the task list), `J`/`K` scroll the detail, `Esc` back or clear the filter, `a` quick add, `d` done (and reopen), `x` delete (confirm), `u` undo, `e` edit summary, `n` edit notes in `$EDITOR`, `t` due (same date grammar as quick add, empty clears), `p` cycle priority none, high, medium, low, `T` tags, `m` move project (picker), `/` filter, `s` sync, `c` show completed, `?` help, `q` quit. Undo covers add, change, complete, delete and move for the session (last 20). Quick add without `@project` uses the project of the current view, else `default_project`, else asks.
 
 Quick add grammar, one line, Taskwarrior-shaped, parsed by a small tokenizer rather than NLP:
 
@@ -213,7 +213,7 @@ Book dentist due:tomorrow 09:00 pri:H +health @personal
 
 Same grammar drives `husk add`, so you can bind a Hyprland key to `fuzzel --dmenu | xargs husk add` for capture without opening the TUI.
 
-Detail view shows every field including alarms and raw RRULE, and `o` opens the `.ics` in `$EDITOR` as an escape hatch.
+Detail view shows every field including alarms and raw RRULE. `o`, opening the raw `.ics` in `$EDITOR` as an escape hatch, comes with M5 and goes through the store like every other write.
 
 ## 7b. Theming
 
