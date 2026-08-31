@@ -196,9 +196,9 @@ Layout, ratatui plus crossterm:
  a add  d done  e edit  t due  p pri  m move  / filter  s sync  ? help
 ```
 
-Views: `Today` (due today or overdue, all projects), `Upcoming` (next 7 days), `All`, one per project, `Completed` (toggle with `c`). Sort: overdue first, then due time, then priority, then created. Recurring tasks show `↻` and a human rule ("weekly", "every 2nd Tuesday"); `d` on one is refused with a one-line hint. Subtasks render indented under their parent.
+Views: `Today` (due today or overdue, all projects), `Upcoming` (next 7 days), `All`, one per project. `c` toggles completed tasks into the current view, dimmed and sorted last: Today shows what was completed today, Upcoming the last seven days, All and the projects everything. Sort: overdue first, then due time, then priority, then created; undated tasks after dated ones, done tasks last. Recurring tasks show `↻` and a human rule ("weekly", "every 2nd Tuesday"); `d` on one is refused with a one-line hint. Subtasks render indented under their parent.
 
-Keys, vim-flavored: `j`/`k` move, `Tab` switch pane, `Enter` detail, `a` quick add, `d` done, `x` delete (confirm), `u` undo, `e` edit summary, `n` edit notes in `$EDITOR`, `t` due, `p` priority, `T` tags, `m` move project, `/` filter, `s` sync, `c` show completed, `?` help, `q` quit.
+Keys, vim-flavored: `j`/`k` move, `g`/`G` first/last, `Tab` switch pane, `Enter` detail (in the projects pane: focus the task list), `J`/`K` scroll the detail, `Esc` back or clear the filter, `a` quick add, `d` done, `x` delete (confirm), `u` undo, `e` edit summary, `n` edit notes in `$EDITOR`, `t` due, `p` priority, `T` tags, `m` move project, `/` filter, `s` sync, `c` show completed, `?` help, `q` quit.
 
 Quick add grammar, one line, Taskwarrior-shaped, parsed by a small tokenizer rather than NLP:
 
@@ -224,7 +224,7 @@ Design, in three layers, all resolved into one `Theme` struct at startup:
 
 2. Scheme files. `theme = "~/.config/husk/themes/<name>.yaml"` loads any Base16 or Base24 scheme file from tinted-theming unmodified. That is several hundred maintained schemes (Catppuccin, Gruvbox, Tokyo Night, Nord, and so on) with no porting work, and the same files btop, yazi flavors and many others are generated from. husk maps the 16 or 24 base slots to its semantic slots with a fixed table.
 
-3. Semantic overrides. `~/.config/husk/theme.toml` sets individual semantic slots, on top of either layer above. This is the yazi and btop model: a flat file of named slots, each a style (`fg`, `bg`, `bold`, `italic`, `underline`, `dim`, `reverse`), colors as hex, ANSI names, or `base0X` references.
+3. Semantic overrides. `~/.config/husk/theme.toml` sets individual semantic slots, on top of either layer above. This is the yazi and btop model: a flat file of named slots, each a style (`fg`, `bg`, `bold`, `italic`, `underline`, `dim`, `reverse`), colors as hex, ANSI names, a 0 to 255 index, another slot's name (one level), or `base0X` references once a scheme is loaded.
 
 Semantic slots, kept small and stable so themes do not rot when the UI changes:
 
@@ -320,6 +320,7 @@ sync_command = ["vdirsyncer", "sync"]
 date_format = "%Y-%m-%d"
 time_format = "%H:%M"
 default_alarm_leads = ["1d", "1h", "0m"]
+theme = "phosphor"      # built-in flavor; M5 lets this be a Base16 scheme path as well
 ```
 
 ## 9. Implementation plan
@@ -330,13 +331,13 @@ M0 without the DappNode: until a DappNode package exists, run Radicale on the la
 
 M1, weekend 1: codec and store. Fold/unfold, escaping, parse, serialize. Round-trip test: for every fixture, parse then serialize must equal the input modulo folding. `VdirStore` with atomic writes, sequence bump, move, delete. Test against a temp dir.
 
-M2, weekend 2: read-only TUI. Projects pane, task list, Today and Upcoming views, detail view, filter. No writes yet. This is where the layout and keybindings get settled cheaply.
+M2, weekend 2: read-only TUI. Projects pane, task list, Today and Upcoming views, detail view, filter, `c` for completed tasks. No writes yet. This is where the layout and keybindings get settled cheaply.
 
 M3, weekend 3: mutations. Quick add and its tests, done, delete with undo, edit due, priority, tags, notes via `$EDITOR`, move. Sync trigger after writes. Alarm written on create. From here on you can live on it.
 
 M4, one evening: `husk notify`, state file, systemd timer, `husk list --json` for Waybar, `husk add` for the Hyprland capture keybind.
 
-M5, as needed: RRULE description, subtask rendering, colors from the vdir `color` file, `c` completed view, `husk sync --discover`.
+M5, as needed: RRULE description, subtask rendering, colors from the vdir `color` file, `husk sync --discover`.
 
 Later, optional: `CaldavStore` implementing `Store` over HTTPS with `reqwest` (PROPFIND, REPORT, sync-token, If-Match on PUT). At that point vdirsyncer becomes optional and husk can run on a machine with no sync setup. Also: recurrence completion (advance `DUE` by the rule, bump `SEQUENCE`), creating projects (MKCALENDAR), attachments never.
 
