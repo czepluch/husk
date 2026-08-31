@@ -117,6 +117,7 @@ pub trait Store {
     fn save(&self, task: &mut Task) -> Result<()>;   // refreshes the task to what was written
     fn delete(&self, uid: &str) -> Result<()>;
     fn move_to(&self, uid: &str, project: &ProjectId) -> Result<()>;
+    fn restore(&self, task: &Task) -> Result<Task>;      // undo: rewrite a task from memory, SEQUENCE raised above the file's
 }
 ```
 
@@ -125,7 +126,7 @@ pub trait Store {
 - Write atomically: serialize to `<uid>.ics.tmp` in the same directory, fsync, rename over the target. vdirsyncer detects the change by etag (file hash), so partial writes must never be visible.
 - On every save: `SEQUENCE += 1`, `LAST-MODIFIED` and `DTSTAMP` = now (UTC). Phone clients use these to decide which side wins. A save of an unchanged task writes nothing, and a save is refused when the file's parsed content changed since the task was read, so an edit synced from a phone in between is never overwritten.
 - Move between projects = write into the new directory, delete from the old one, same UID. vdirsyncer handles this as delete plus create on the server, which is what CalDAV expects.
-- Delete = remove the file. Offer a session-level undo by keeping the last N removed or overwritten file contents in memory.
+- Delete = remove the file. Undo is session-level: the TUI keeps the last few removed or overwritten tasks in memory and `restore` writes one back, with `SEQUENCE` raised above whatever the file holds so the phones take the reverted content.
 - Line folding at 75 octets, escape `,` `;` `\` and newlines in text values. Unfold on read. Get this right once, in one place, with tests.
 - Line endings: Radicale stores CRLF but vdirsyncer writes LF into the vdir, while files written locally (todoman, husk) keep whatever their author used, so the vdir is mixed. Accept both on read, write back whatever the file used, and use CRLF for new files. This is what keeps an unmodified save byte-identical.
 

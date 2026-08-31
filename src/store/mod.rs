@@ -20,5 +20,9 @@ pub trait Store {
     /// written.
     fn save(&self, task: &mut Task) -> Result<()>;
     fn delete(&self, uid: &str) -> Result<()>;
+    /// Writes a task back from memory, for undo: after a delete the file is
+    /// recreated, after an edit it is overwritten. `SEQUENCE` ends up above
+    /// whatever the file held, so phone clients accept the older content.
+    fn restore(&self, task: &Task) -> Result<Task>;
     fn move_to(&self, uid: &str, project: &ProjectId) -> Result<()>;
 }

@@ -180,6 +180,32 @@ impl Store for VdirStore {
         fs::remove_file(&path).with_context(|| format!("delete {}", path.display()))
     }
 
+    fn restore(&self, task: &Task) -> Result<Task> {
+        let dir = self.project_dir(&task.project);
+        if !dir.is_dir() {
+            bail!("unknown project {}", task.project.as_str());
+        }
+        let (path, on_disk) = match self.locate(&task.uid) {
+            Ok((path, current)) => {
+                if current.project != task.project {
+                    bail!(
+                        "task {} has moved to project {}",
+                        task.uid,
+                        current.project.as_str()
+                    );
+                }
+                (path, vtodo::sequence(&current.raw))
+            }
+            Err(_) => (dir.join(format!("{}.ics", task.uid)), 0),
+        };
+        let mut doc = task.raw.clone();
+        let base = on_disk.max(vtodo::sequence(&doc));
+        vtodo::set_sequence(&mut doc, base)?;
+        vtodo::bump(&mut doc, (self.clock)())?;
+        write_atomic(&path, &codec::serialize(&doc))?;
+        vtodo::from_document(doc, task.project.clone())
+    }
+
     fn move_to(&self, uid: &str, project: &ProjectId) -> Result<()> {
         let (path, task) = self.locate(uid)?;
         if &task.project == project {

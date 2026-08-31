@@ -283,3 +283,59 @@ fn move_to_refuses_a_target_that_already_holds_the_uid() {
     assert!(err.to_string().contains("already holds"), "{err}");
     assert!(original.exists());
 }
+
+#[test]
+fn restore_recreates_a_deleted_task_with_a_higher_sequence() {
+    let dir = common::fixture_vdir();
+    let store = store(&dir);
+    let task = store.get(TEST_TASK).unwrap();
+    store.delete(TEST_TASK).unwrap();
+    assert!(store.get(TEST_TASK).is_err());
+
+    let back = store.restore(&task).unwrap();
+    assert_eq!(back.summary, task.summary);
+    let path = dir.path().join(format!("life/{TEST_TASK}.ics"));
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("SUMMARY:Test task\n"), "{text}");
+    assert!(text.contains("SEQUENCE:1\n"), "{text}");
+    assert!(text.contains("LAST-MODIFIED:20260831T140000Z\n"), "{text}");
+    assert_eq!(store.get(TEST_TASK).unwrap(), back);
+}
+
+#[test]
+fn restore_overwrites_an_edited_task_and_outranks_it() {
+    let dir = common::fixture_vdir();
+    let store = store(&dir);
+    let before = store.get(TEST_TASK).unwrap();
+    let mut edited = before.clone();
+    edited.summary = "Renamed".to_string();
+    store.save(&mut edited).unwrap();
+    edited.summary = "Renamed again".to_string();
+    store.save(&mut edited).unwrap();
+    assert!(
+        fs::read_to_string(dir.path().join("life/no-due.ics"))
+            .unwrap()
+            .contains("SEQUENCE:2\n")
+    );
+
+    let back = store.restore(&before).unwrap();
+    assert_eq!(back.summary, "Test task");
+    let text = fs::read_to_string(dir.path().join("life/no-due.ics")).unwrap();
+    assert!(text.contains("SUMMARY:Test task\n"), "{text}");
+    assert!(
+        text.contains("SEQUENCE:3\n"),
+        "above the edited file's 2:\n{text}"
+    );
+
+    let mut moved = store.get(TEST_TASK).unwrap();
+    store.move_to(TEST_TASK, &argot()).unwrap();
+    moved.summary = "x".to_string();
+    assert!(
+        store.restore(&before).is_err(),
+        "the task lives elsewhere now"
+    );
+    fs::remove_dir_all(dir.path().join("solidity")).unwrap();
+    let mut gone = before.clone();
+    gone.project = ProjectId::new("solidity");
+    assert!(store.restore(&gone).is_err(), "unknown project");
+}

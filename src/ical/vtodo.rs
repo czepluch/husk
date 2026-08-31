@@ -136,14 +136,26 @@ pub fn apply(task: &Task) -> Result<Document> {
     Ok(doc)
 }
 
+/// The `SEQUENCE` a document carries; missing counts as 0.
+pub fn sequence(doc: &Document) -> u64 {
+    doc.root
+        .child("VTODO")
+        .and_then(|todo| todo.prop("SEQUENCE"))
+        .and_then(|p| p.value.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+pub fn set_sequence(doc: &mut Document, sequence: u64) -> Result<()> {
+    let todo = doc.root.child_mut("VTODO").context("no VTODO component")?;
+    todo.set(Property::new("SEQUENCE", sequence.to_string()));
+    Ok(())
+}
+
 /// Marks a rewrite the way phone clients expect: `SEQUENCE` up by one
 /// (missing counts as 0), `LAST-MODIFIED` and `DTSTAMP` set to now.
 pub fn bump(doc: &mut Document, now: DateTime<Utc>) -> Result<()> {
+    let sequence = sequence(doc);
     let todo = doc.root.child_mut("VTODO").context("no VTODO component")?;
-    let sequence: u64 = todo
-        .prop("SEQUENCE")
-        .and_then(|p| p.value.trim().parse().ok())
-        .unwrap_or(0);
     todo.set(Property::new(
         "SEQUENCE",
         sequence.saturating_add(1).to_string(),
