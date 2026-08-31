@@ -256,7 +256,7 @@ help_key = { fg = "accent", bold = true }
 [symbols]
 set = "unicode"         # "unicode" | "ascii" | custom table below; "nerd" once its glyphs are verified
 recurring = ""
-overdue = "!"
+overdue = "◂"
 done = "✓"
 subtask = "└"
 alarm = ""
@@ -360,3 +360,4 @@ Later, optional: `CaldavStore` implementing `Store` over HTTPS with `reqwest` (P
 - Share a list with your partner: create it in Radicale under a shared collection with `rights` allowing both users; Apple Reminders and Tasks.org both handle it, husk sees it as one more project.
 - Since Radicale is now running, point khal and Apple Calendar at it too; `Upcoming` could show today's events read-only for context, later.
 - Tag-based views (`#health` across all projects) fall out of the filter for free.
+- An Urgent smart view: high priority or due within a day, across projects.

@@ -79,11 +79,14 @@ fn draw_views(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 fn draw_tasks(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let tasks = app.visible_tasks();
     let name = app.view_name(&app.view());
-    let title = if app.filter.is_empty() {
-        format!(" {name} ")
-    } else {
-        format!(" {name} /{} ", app.filter)
-    };
+    let mut title = format!(" {name}");
+    if !app.filter.is_empty() {
+        title.push_str(&format!(" /{}", app.filter));
+    }
+    if app.show_done {
+        title.push_str(" +done");
+    }
+    title.push(' ');
     let due = Line::styled(format!(" {} due ", app.due_count()), theme.muted).right_aligned();
     let block = block(theme, title, app.pane == Pane::Tasks).title_top(due);
     if tasks.is_empty() {
@@ -95,7 +98,7 @@ fn draw_tasks(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     }
     let items: Vec<ListItem> = tasks
         .iter()
-        .map(|task| ListItem::new(task_line(task, app, theme)))
+        .map(|task| ListItem::new(task_item(task, app, theme, area.width)))
         .collect();
     let list = List::new(items)
         .block(block)
@@ -122,31 +125,103 @@ fn priority_style(priority: Priority, theme: &Theme) -> Style {
     }
 }
 
-fn task_line<'a>(task: &'a Task, app: &App, theme: &Theme) -> Line<'a> {
-    let due = due_style(task, app, theme);
-    let flag = if bucket(task.due, app.now) == Bucket::Overdue {
+/// Width of the columns before the summary: flag, due label, priority.
+const PREFIX_WIDTH: usize = 18;
+
+fn priority_marker(priority: Priority) -> &'static str {
+    match priority {
+        Priority::High => "!!!",
+        Priority::Medium => "!!",
+        Priority::Low => "!",
+        Priority::None => "",
+    }
+}
+
+/// One list item: the columns, then the summary, tags and recurring symbol
+/// wrapped by word to the pane width, continuation lines indented under the
+/// summary column.
+fn task_item<'a>(task: &'a Task, app: &App, theme: &Theme, pane_width: u16) -> Text<'a> {
+    let done = task.is_done();
+    let dim = |style: Style| if done { theme.done } else { style };
+    let due = dim(due_style(task, app, theme));
+    let flag = if done {
+        theme.symbols.done.clone()
+    } else if bucket(task.due, app.now) == Bucket::Overdue {
         theme.symbols.overdue.clone()
     } else {
         " ".to_string()
     };
     let label = due_label(task.due, app.now, &app.config);
-    let mut spans = vec![
+    let marker = priority_marker(task.priority);
+    let prefix = vec![
         Span::styled(format!(" {flag} "), due),
         Span::styled(format!("{label:<10} "), due),
-        Span::styled(task.summary.as_str(), priority_style(task.priority, theme)),
+        Span::styled(
+            format!("{marker:<3} "),
+            dim(priority_style(task.priority, theme)),
+        ),
     ];
-    for tag in &task.tags {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(format!("#{tag}"), theme.tag));
-    }
+
+    let text = dim(Style::default());
+    let mut words: Vec<Span<'a>> = task
+        .summary
+        .split_whitespace()
+        .map(|word| Span::styled(word, text))
+        .collect();
+    words.extend(
+        task.tags
+            .iter()
+            .map(|tag| Span::styled(format!("#{tag}"), dim(theme.tag))),
+    );
     if task.is_recurring() {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
+        words.push(Span::styled(
             theme.symbols.recurring.clone(),
-            theme.recurring,
+            dim(theme.recurring),
         ));
     }
-    Line::from(spans)
+
+    let width = usize::from(pane_width.saturating_sub(2)).saturating_sub(PREFIX_WIDTH);
+    let mut lines = Vec::new();
+    for (i, row) in wrap_words(words, width.max(8)).into_iter().enumerate() {
+        let mut spans = if i == 0 {
+            prefix.clone()
+        } else {
+            vec![Span::raw(" ".repeat(PREFIX_WIDTH))]
+        };
+        for (j, word) in row.into_iter().enumerate() {
+            if j > 0 {
+                spans.push(Span::raw(" "));
+            }
+            spans.push(word);
+        }
+        lines.push(Line::from(spans));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(prefix));
+    }
+    Text::from(lines)
+}
+
+/// Greedy word wrap on display width; a word wider than the line gets a
+/// line of its own and is clipped by the widget.
+fn wrap_words<'a>(words: Vec<Span<'a>>, width: usize) -> Vec<Vec<Span<'a>>> {
+    let mut rows: Vec<Vec<Span<'a>>> = Vec::new();
+    let mut current: Vec<Span<'a>> = Vec::new();
+    let mut used = 0;
+    for word in words {
+        let w = word.width();
+        let needed = if current.is_empty() { w } else { used + 1 + w };
+        if !current.is_empty() && needed > width {
+            rows.push(std::mem::take(&mut current));
+            used = 0;
+        }
+        used = if current.is_empty() { w } else { used + 1 + w };
+        current.push(word);
+    }
+    if !current.is_empty() {
+        rows.push(current);
+    }
+    rows
 }
 
 fn draw_detail(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
@@ -269,6 +344,7 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 ("Tab", "pane"),
                 ("Enter", "detail"),
                 ("/", "filter"),
+                ("c", "done"),
                 ("?", "help"),
                 ("q", "quit"),
             ],
@@ -294,6 +370,7 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
         ("Tab", "switch pane"),
         ("Enter", "open the task, or focus the task list"),
         ("/", "filter by text; Enter keeps it, Esc clears it"),
+        ("c", "show or hide completed tasks"),
         ("Esc", "back, or clear the filter"),
         ("?", "this help"),
         ("q", "quit"),

@@ -395,11 +395,12 @@ fn frames_render_the_layout_the_detail_and_the_help() {
         "All",
         "Life",
         "Argot",
-        "Pay rent",
+        "!!! Pay rent",
         "Book dentist",
         "#health",
         "09:00",
-        "Sun",
+        "◂ Sun",
+        "!!  Have fun",
         "4 due",
         "j/k",
         "quit",
@@ -411,6 +412,19 @@ fn frames_render_the_layout_the_detail_and_the_help() {
         !text.contains("Read Crafting"),
         "later task in Today:\n{text}"
     );
+
+    app.handle_key(key('c'));
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(
+        text.lines()
+            .any(|l| l.contains("✓ Sun") && l.contains("Old thing")),
+        "done task with c:
+{text}"
+    );
+    assert!(text.contains("Today +done"), "{text}");
+    assert_eq!(uids(&app).last(), Some(&"done"), "done tasks sort last");
+    app.handle_key(key('c'));
 
     app.handle_key(code(KeyCode::Enter));
     terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
@@ -447,4 +461,36 @@ fn frames_render_the_layout_the_detail_and_the_help() {
         let mut small = Terminal::new(TestBackend::new(w, h)).unwrap();
         small.draw(|f| views::draw(f, &app, &ansi)).unwrap();
     }
+}
+
+#[test]
+fn long_summaries_wrap_under_the_summary_column() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let long =
+        "Her er en meget lang titel som med sikkerhed fylder mere end en enkelt linje i listen";
+    let tasks = vec![task(
+        "long",
+        long,
+        "p",
+        Some("DUE;VALUE=DATE:20260831"),
+        "CATEGORIES:tag\r\n",
+    )];
+    let app = App::new(Config::default(), vec![], tasks, now());
+    let mut terminal = Terminal::new(TestBackend::new(70, 12)).unwrap();
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(
+        text.contains("│   today          Her er en meget lang"),
+        "{text}"
+    );
+    assert!(
+        text.contains("listen #tag"),
+        "wrapped tail with the tag:\n{text}"
+    );
+    let continuation = text.lines().find(|l| l.contains("listen #tag")).unwrap();
+    assert!(
+        continuation.starts_with("│                  "),
+        "indented under the summary column:\n{text}"
+    );
+    assert!(text.lines().all(|l| l.chars().count() <= 70));
 }

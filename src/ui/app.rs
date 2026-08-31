@@ -50,6 +50,8 @@ pub struct App {
     pub task_index: usize,
     pub mode: Mode,
     pub filter: String,
+    /// Whether completed and cancelled tasks are shown in the current view.
+    pub show_done: bool,
     pub now: DateTime<Local>,
     pub quit: bool,
 }
@@ -70,6 +72,7 @@ impl App {
             task_index: 0,
             mode: Mode::Normal,
             filter: String::new(),
+            show_done: false,
             now,
             quit: false,
         }
@@ -110,7 +113,7 @@ impl App {
     pub fn count(&self, view: &View) -> usize {
         self.tasks
             .iter()
-            .filter(|t| in_view(t, view, self.now))
+            .filter(|t| in_view(t, view, self.now, false))
             .count()
     }
 
@@ -120,7 +123,7 @@ impl App {
         let mut tasks: Vec<&Task> = self
             .tasks
             .iter()
-            .filter(|t| in_view(t, &view, self.now))
+            .filter(|t| in_view(t, &view, self.now, self.show_done))
             .filter(|t| self.matches_filter(t))
             .collect();
         tasks.sort_by_cached_key(|t| sort_key(t, self.now));
@@ -131,10 +134,11 @@ impl App {
         self.visible_tasks().get(self.task_index).copied()
     }
 
-    /// Visible tasks that are due today or overdue.
+    /// Visible pending tasks that are due today or overdue.
     pub fn due_count(&self) -> usize {
         self.visible_tasks()
             .iter()
+            .filter(|t| !t.is_done())
             .filter(|t| matches!(bucket(t.due, self.now), Bucket::Overdue | Bucket::Today))
             .count()
     }
@@ -184,6 +188,7 @@ impl App {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('/') => self.mode = Mode::Filter,
+            KeyCode::Char('c') => self.show_done = !self.show_done,
             KeyCode::Tab | KeyCode::BackTab => {
                 self.pane = match self.pane {
                     Pane::Views => Pane::Tasks,
@@ -275,9 +280,10 @@ pub fn bucket(due: Option<Due>, now: DateTime<Local>) -> Bucket {
     }
 }
 
-/// Pending tasks only; done tasks get their own view later.
-pub fn in_view(task: &Task, view: &View, now: DateTime<Local>) -> bool {
-    if task.is_done() {
+/// Done tasks are hidden unless asked for; when shown, they qualify for
+/// Today and Upcoming by their due date like any other task.
+pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) -> bool {
+    if task.is_done() && !show_done {
         return false;
     }
     match view {
@@ -292,14 +298,19 @@ pub fn in_view(task: &Task, view: &View, now: DateTime<Local>) -> bool {
 }
 
 /// Overdue first, then by due time, then priority, then creation time.
+/// Done tasks come last.
 pub fn sort_key(
     task: &Task,
     now: DateTime<Local>,
 ) -> (u8, Option<DateTime<Utc>>, Priority, Option<DateTime<Utc>>) {
-    let rank = match bucket(task.due, now) {
-        Bucket::Overdue => 0,
-        Bucket::None => 2,
-        _ => 1,
+    let rank = if task.is_done() {
+        3
+    } else {
+        match bucket(task.due, now) {
+            Bucket::Overdue => 0,
+            Bucket::None => 2,
+            _ => 1,
+        }
     };
     (rank, task.due.map(instant), task.priority, task.created)
 }

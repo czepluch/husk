@@ -86,8 +86,8 @@ pub struct Symbols {
 impl Symbols {
     fn set(name: &str) -> Result<Self> {
         let (recurring, overdue, done, subtask, alarm) = match name {
-            "unicode" => ("↻", "!", "✓", "└", "◷"),
-            "ascii" => ("@", "!", "x", "-", "*"),
+            "unicode" => ("↻", "◂", "✓", "└", "◷"),
+            "ascii" => ("@", "<", "x", "-", "*"),
             other => bail!("unknown symbol set {other:?}; sets are unicode and ascii"),
         };
         Ok(Self {

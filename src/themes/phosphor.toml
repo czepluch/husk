@@ -21,7 +21,7 @@ project = "#4cc9f0"
 recurring = "#2ec4b6"
 
 [styles]
-selected = { bg = "#1b2a1b", bold = true }
+selected = { bg = "#243524" }
 title = { fg = "accent", bold = true }
 status_bar = { fg = "muted" }
 help_key = { fg = "accent", bold = true }
