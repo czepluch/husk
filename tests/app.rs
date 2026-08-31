@@ -494,3 +494,38 @@ fn long_summaries_wrap_under_the_summary_column() {
     );
     assert!(text.lines().all(|l| l.chars().count() <= 70));
 }
+
+#[test]
+fn priority_is_shown_as_title_weight() {
+    use ratatui::style::Modifier;
+    let theme = Theme::load("phosphor", None).unwrap();
+    let tasks = vec![
+        task("high", "High one", "p", None, "PRIORITY:1\r\n"),
+        task("medium", "Medium one", "p", None, "PRIORITY:5\r\n"),
+        task("low", "Low one", "p", None, "PRIORITY:9\r\n"),
+        task("none", "Plain one", "p", None, ""),
+    ];
+    let mut app = App::new(Config::default(), vec![], tasks, now());
+    app.view_index = 2;
+    let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    terminal.draw(|f| views::draw(f, &app, &theme)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let text = screen(&terminal);
+    let modifier_at = |needle: &str| {
+        let (y, line) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains(needle))
+            .unwrap();
+        let x = line.chars().position(|_| false).unwrap_or(0) + line.find(needle).unwrap();
+        let x = line[..x].chars().count();
+        buffer.cell((x as u16, y as u16)).unwrap().modifier
+    };
+    assert!(modifier_at("High one").contains(Modifier::BOLD));
+    assert!(!modifier_at("Medium one").contains(Modifier::BOLD | Modifier::DIM));
+    assert!(modifier_at("Low one").contains(Modifier::DIM));
+    assert!(
+        text.contains("!!! High one") && text.contains("!   Low one"),
+        "{text}"
+    );
+}

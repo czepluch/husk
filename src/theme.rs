@@ -15,7 +15,7 @@ use serde::Deserialize;
 const PHOSPHOR: &str = include_str!("themes/phosphor.toml");
 const ANSI: &str = include_str!("themes/ansi.toml");
 
-pub const COLOR_SLOTS: [&str; 16] = [
+pub const COLOR_SLOTS: [&str; 13] = [
     "bg",
     "fg",
     "muted",
@@ -26,14 +26,22 @@ pub const COLOR_SLOTS: [&str; 16] = [
     "due_today",
     "due_soon",
     "done",
-    "pri_high",
-    "pri_medium",
-    "pri_low",
     "tag",
     "project",
     "recurring",
 ];
-pub const STYLE_SLOTS: [&str; 4] = ["selected", "title", "status_bar", "help_key"];
+/// Priority is a text weight by default (bold, normal, dim) rather than a
+/// hue, so it never competes with the due-date colors; a theme can still
+/// give the `pri_*` styles a color.
+pub const STYLE_SLOTS: [&str; 7] = [
+    "selected",
+    "title",
+    "status_bar",
+    "help_key",
+    "pri_high",
+    "pri_medium",
+    "pri_low",
+];
 
 /// The contents of one theme file; every key optional so files can be layered.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -207,9 +215,9 @@ impl ThemeFile {
             due_today: fg("due_today")?,
             due_soon: fg("due_soon")?,
             done: fg("done")?,
-            pri_high: fg("pri_high")?,
-            pri_medium: fg("pri_medium")?,
-            pri_low: fg("pri_low")?,
+            pri_high: style("pri_high", Style::new().add_modifier(Modifier::BOLD))?,
+            pri_medium: style("pri_medium", Style::new())?,
+            pri_low: style("pri_low", Style::new().add_modifier(Modifier::DIM))?,
             tag: fg("tag")?,
             project: fg("project")?,
             recurring: fg("recurring")?,
@@ -367,6 +375,9 @@ mod tests {
                 .add_modifier(Modifier::BOLD)
         );
         assert_eq!(phosphor.symbols.recurring, "↻");
+        assert_eq!(phosphor.pri_high, Style::new().add_modifier(Modifier::BOLD));
+        assert_eq!(phosphor.pri_medium, Style::new());
+        assert_eq!(phosphor.pri_low, Style::new().add_modifier(Modifier::DIM));
         assert_eq!(phosphor.border_type, Some(BorderType::Plain));
 
         let ansi = ThemeFile::parse(ANSI).unwrap().resolve().unwrap();

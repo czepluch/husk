@@ -13,18 +13,19 @@ overdue = "#ff4040"
 due_today = "#ffb000"
 due_soon = "#4cc9f0"
 done = "#5c665c"
-pri_high = "#ff4040"
-pri_medium = "#ffb000"
-pri_low = "#4cc9f0"
 tag = "#c774e8"
 project = "#4cc9f0"
 recurring = "#2ec4b6"
 
 [styles]
-selected = { bg = "#243524" }
+selected = { bg = "#1b2a1b", bold = true }
 title = { fg = "accent", bold = true }
 status_bar = { fg = "muted" }
 help_key = { fg = "accent", bold = true }
+# Priority as weight; set fg on these for a hue instead.
+pri_high = { bold = true }
+pri_medium = {}
+pri_low = { dim = true }
 
 [symbols]
 set = "unicode"

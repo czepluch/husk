@@ -156,13 +156,10 @@ fn task_item<'a>(task: &'a Task, app: &App, theme: &Theme, pane_width: u16) -> T
     let prefix = vec![
         Span::styled(format!(" {flag} "), due),
         Span::styled(format!("{label:<10} "), due),
-        Span::styled(
-            format!("{marker:<3} "),
-            dim(priority_style(task.priority, theme)),
-        ),
+        Span::styled(format!("{marker:<3} "), dim(theme.muted)),
     ];
 
-    let text = dim(Style::default());
+    let text = dim(priority_style(task.priority, theme));
     let mut words: Vec<Span<'a>> = task
         .summary
         .split_whitespace()

@@ -21,6 +21,7 @@ CalDAV task TUI in Rust (ratatui). The full design is in `docs/spec.md`; read it
 - Small commits, one concern each, imperative subject line under 60 chars. Commit without asking; always ask before pushing.
 - Before declaring a milestone done, spawn a fresh review agent with no shared context to review the milestone's code against the spec and this file, then address its findings.
 - When a better approach than the spec's turns up, update the spec and say what changed in one sentence. Features outside the current milestone still wait for approval.
+- Visual details the user has commented on (colors, weights, symbols, layout) are changed only on request. Propose alternatives, with a rendered preview when possible, and wait.
 - Do not touch `~/.local/share/vdirsyncer` during tests; use a temp dir.
 
 ## Style

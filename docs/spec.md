@@ -240,9 +240,6 @@ overdue = "base08"
 due_today = "base0A"
 due_soon = "base0D"
 done = "base03"
-pri_high = "base08"
-pri_medium = "base0A"
-pri_low = "base0C"
 tag = "base0E"
 project = "base0D"
 recurring = "base0C"
@@ -252,6 +249,9 @@ selected = { bg = "base02", bold = true }
 title = { fg = "accent", bold = true }
 status_bar = { fg = "muted" }
 help_key = { fg = "accent", bold = true }
+pri_high = { bold = true }    # priority is a text weight by default; give it fg for a hue
+pri_medium = {}
+pri_low = { dim = true }
 
 [symbols]
 set = "unicode"         # "unicode" | "ascii" | custom table below; "nerd" once its glyphs are verified
@@ -277,7 +277,7 @@ Implementation notes:
 - Hot reload: watch `theme.toml` with the `notify` crate and re-resolve on change. Iterating on a theme without restarting is what makes people actually make themes.
 - `husk theme dump` prints the fully resolved theme as TOML, so a user can start from the current look instead of from scratch. `husk theme check <file>` validates a file and reports unknown slots.
 - Symbols must have an ASCII fallback so the app works without a Nerd Font; `set = "ascii"` swaps the whole table.
-- Base16 mapping is the one piece of policy: `base00` bg, `base05` fg, `base03` muted, `base02` selection bg, `base08` red for overdue and high priority, `base0A` yellow for due today and medium, `base0B` green for accent, `base0D` blue for soon and projects, `base0E` magenta for tags, `base0C` cyan for recurring and low. Document it in the README so scheme authors know what to expect.
+- Base16 mapping is the one piece of policy: `base00` bg, `base05` fg, `base03` muted, `base02` selection bg, `base08` red for overdue, `base0A` yellow for due today, `base0B` green for accent, `base0D` blue for soon and projects, `base0E` magenta for tags, `base0C` cyan for recurring. Priority is not a color: hue encodes time, weight encodes importance (bold high, normal medium, dim low), and the `!!!` marker column repeats it for terminals without weights. Document it in the README so scheme authors know what to expect.
 
 Add to M2 (read-only TUI): the theme loader with the `phosphor` and `ansi` flavors, since layout and colors are settled together. Add to M5: Base16 loading, hot reload, `husk theme dump` and `check`.
 

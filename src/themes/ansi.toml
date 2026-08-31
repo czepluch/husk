@@ -12,9 +12,6 @@ overdue = "red"
 due_today = "yellow"
 due_soon = "blue"
 done = "bright_black"
-pri_high = "red"
-pri_medium = "yellow"
-pri_low = "cyan"
 tag = "magenta"
 project = "blue"
 recurring = "cyan"
@@ -24,6 +21,10 @@ selected = { reverse = true }
 title = { fg = "accent", bold = true }
 status_bar = { fg = "muted" }
 help_key = { fg = "accent", bold = true }
+# Priority as weight; set fg on these for a hue instead.
+pri_high = { bold = true }
+pri_medium = {}
+pri_low = { dim = true }
 
 [symbols]
 set = "unicode"
