@@ -136,9 +136,10 @@ impl Component {
         self.children_mut().find(|c| c.is(name))
     }
 
-    /// Replaces the first property with this name in place, or inserts the
-    /// property right after the last existing property so it stays with the
-    /// other properties rather than after the child components.
+    /// Replaces the first property with this name in place. A new property
+    /// goes before the first child component, after the properties already
+    /// there, since RFC 5545 puts a component's properties before its
+    /// sub-components (Tasks.org puts one after them; that one stays put).
     pub fn set(&mut self, prop: Property) {
         if let Some(existing) = self.prop_mut(&prop.name) {
             *existing = prop;
@@ -147,9 +148,17 @@ impl Component {
         let at = self
             .entries
             .iter()
-            .rposition(|e| matches!(e, Entry::Property(_)))
-            .map_or(0, |i| i + 1);
+            .position(|e| matches!(e, Entry::Component(_)))
+            .unwrap_or(self.entries.len());
         self.entries.insert(at, Entry::Property(prop));
+    }
+
+    /// Sets a text value, escaped, keeping the property's parameters.
+    pub fn set_text(&mut self, name: &str, text: &str) {
+        match self.prop_mut(name) {
+            Some(existing) => existing.value = escape_text(text),
+            None => self.set(Property::text_value(name, text)),
+        }
     }
 
     /// Removes every property with this name and returns how many there were.
@@ -289,8 +298,8 @@ pub fn parse(input: &str) -> Result<Document> {
             if !component.is(&prop.value) {
                 bail!(
                     "line {n}: END:{} closes BEGIN:{}",
-                    prop.value,
-                    component.name
+                    excerpt(&prop.value),
+                    excerpt(&component.name)
                 );
             }
             match stack.last_mut() {
@@ -306,7 +315,7 @@ pub fn parse(input: &str) -> Result<Document> {
     }
 
     if let Some(open) = stack.last() {
-        bail!("unterminated component BEGIN:{}", open.name);
+        bail!("unterminated component BEGIN:{}", excerpt(&open.name));
     }
     let root = root.context("no component found")?;
     Ok(Document { root, line_ending })
@@ -315,17 +324,17 @@ pub fn parse(input: &str) -> Result<Document> {
 fn parse_content_line(line: &str) -> Result<Property> {
     let name_end = line
         .find([';', ':'])
-        .with_context(|| format!("missing ':' in {line:?}"))?;
+        .with_context(|| format!("missing ':' in {:?}", excerpt(line)))?;
     let name = &line[..name_end];
     if name.is_empty() {
-        bail!("empty property name in {line:?}");
+        bail!("empty property name in {:?}", excerpt(line));
     }
     let mut params = Vec::new();
     let mut rest = &line[name_end..];
     while let Some(after) = rest.strip_prefix(';') {
         let eq = after
             .find('=')
-            .with_context(|| format!("parameter without '=' in {line:?}"))?;
+            .with_context(|| format!("parameter without '=' in {:?}", excerpt(line)))?;
         let value_start = &after[eq + 1..];
         let end = param_value_end(value_start);
         params.push(Param {
@@ -336,12 +345,21 @@ fn parse_content_line(line: &str) -> Result<Property> {
     }
     let value = rest
         .strip_prefix(':')
-        .with_context(|| format!("missing ':' after parameters in {line:?}"))?;
+        .with_context(|| format!("missing ':' after parameters in {:?}", excerpt(line)))?;
     Ok(Property {
         name: name.to_string(),
         params,
         value: value.to_string(),
     })
+}
+
+/// The start of a line for an error message; a CR-only file is one line.
+fn excerpt(line: &str) -> String {
+    let mut short: String = line.chars().take(40).collect();
+    if short.len() < line.len() {
+        short.push_str("...");
+    }
+    short
 }
 
 /// Index of the first `;` or `:` outside double quotes, or the end.

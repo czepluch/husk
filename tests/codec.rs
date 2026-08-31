@@ -212,3 +212,44 @@ fn rejects_malformed_input() {
         "content after the root component"
     );
 }
+
+#[test]
+fn set_inserts_a_new_property_before_the_first_child_component() {
+    let doc = parse(&common::fixture("tasksorg/timed-alarms-repeat.ics"));
+    let mut vtodo = doc.root.child("VTODO").cloned().unwrap();
+    vtodo.set(Property::new("STATUS", "NEEDS-ACTION"));
+    let names = entry_names(&vtodo);
+    let status = names.iter().position(|n| *n == "STATUS").unwrap();
+    assert_eq!(names[status - 1], "UID");
+    assert_eq!(names[status + 1], "VALARM");
+    assert_eq!(names.last(), Some(&"X-APPLE-SORT-ORDER"));
+}
+
+#[test]
+fn set_text_keeps_parameters() {
+    let doc = parse("BEGIN:VCALENDAR\r\nSUMMARY;LANGUAGE=da:Hej\r\nEND:VCALENDAR\r\n");
+    let mut root = doc.root;
+    root.set_text("SUMMARY", "Hej, du");
+    assert_eq!(
+        codec::serialize(&Document::new(root.clone())),
+        "BEGIN:VCALENDAR\r\nSUMMARY;LANGUAGE=da:Hej\\, du\r\nEND:VCALENDAR\r\n"
+    );
+    root.set_text("DESCRIPTION", "ny");
+    assert_eq!(root.prop("DESCRIPTION").unwrap().value, "ny");
+}
+
+#[test]
+fn lowercase_component_and_property_names_parse() {
+    let doc = parse("begin:vcalendar\r\nbegin:vtodo\r\nuid:x\r\nend:vtodo\r\nend:vcalendar\r\n");
+    assert_eq!(
+        doc.root.child("VTODO").unwrap().prop("UID").unwrap().value,
+        "x"
+    );
+}
+
+#[test]
+fn error_messages_do_not_embed_whole_files() {
+    let cr_only = "BEGIN:VCALENDAR\rX:1\rEND:VCALENDAR\r".repeat(20);
+    let err = codec::parse(&cr_only).unwrap_err().to_string();
+    assert!(err.len() < 200, "{err}");
+}
