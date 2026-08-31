@@ -280,10 +280,11 @@ Add to M2 (read-only TUI): the theme loader with the `phosphor` and `ansi` flavo
 
 ## 8. Crate layout and dependencies
 
-Single crate, binary target, modules:
+Single crate: a library target holding the modules below and a thin binary on top, so the tests in `tests/` can reach the modules. Dependencies are added by the milestone that first uses them.
 
 ```
 src/
+  lib.rs          module declarations only
   main.rs         clap: tui (default) | add | list | notify | sync
   config.rs       ~/.config/husk/config.toml via serde + toml
   model.rs        Task, Project, Due, Alarm, Priority, Status

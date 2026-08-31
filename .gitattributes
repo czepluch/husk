@@ -1,0 +1,2 @@
+# Fixtures are byte-exact copies of phone-written files; never normalize their line endings.
+tests/fixtures/** -text
