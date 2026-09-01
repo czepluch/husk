@@ -202,10 +202,7 @@ impl App {
 
     /// A project by directory name or display name, case-insensitively.
     pub fn find_project(&self, name: &str) -> Option<ProjectId> {
-        self.projects
-            .iter()
-            .find(|p| p.id.as_str().eq_ignore_ascii_case(name) || p.name.eq_ignore_ascii_case(name))
-            .map(|p| p.id.clone())
+        crate::model::find_project(&self.projects, name).map(|p| p.id.clone())
     }
 
     /// Pending tasks in a view, ignoring the filter.

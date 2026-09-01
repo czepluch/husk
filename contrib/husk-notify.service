@@ -1,0 +1,8 @@
+# Copy with husk-notify.timer to ~/.config/systemd/user/ after
+# `cargo install --path .`, then `systemctl --user enable --now husk-notify.timer`.
+[Unit]
+Description=husk desktop notifications for due tasks
+
+[Service]
+Type=oneshot
+ExecStart=%h/.cargo/bin/husk notify

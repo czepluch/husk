@@ -109,7 +109,8 @@ fn worker(rx: &Receiver<()>, command: &[String], state: &Mutex<SyncState>, pendi
     }
 }
 
-fn run(command: &[String]) -> Result<(), String> {
+/// Runs the sync command once, in the foreground.
+pub fn run(command: &[String]) -> Result<(), String> {
     let (program, args) = command.split_first().ok_or("no sync command")?;
     let output = Command::new(program)
         .args(args)

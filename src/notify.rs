@@ -175,6 +175,7 @@ pub fn send(notice: &Notice) -> Result<()> {
 
 /// Plans, sends and saves. A notice whose delivery fails is not marked as
 /// fired, so the next run tries it again. Returns how many were shown.
+/// A dry run prints what would fire and changes nothing.
 pub fn run(
     tasks: &[Task],
     projects: &[Project],
@@ -182,9 +183,21 @@ pub fn run(
     now: DateTime<Utc>,
     config: &Config,
     nag: bool,
+    dry_run: bool,
 ) -> Result<usize> {
     let state = State::load(path)?;
     let (notices, mut next) = plan(tasks, projects, &state, now, config, nag);
+    if dry_run {
+        for notice in &notices {
+            println!(
+                "{}  {}  {}",
+                notice.at.with_timezone(&Local).format("%Y-%m-%d %H:%M"),
+                notice.title,
+                notice.body
+            );
+        }
+        return Ok(notices.len());
+    }
     let mut sent = 0;
     let mut failures = Vec::new();
     for notice in &notices {

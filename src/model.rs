@@ -28,6 +28,13 @@ pub struct Project {
     pub color: Option<String>,
 }
 
+/// A project by directory name or display name, case-insensitively.
+pub fn find_project<'a>(projects: &'a [Project], name: &str) -> Option<&'a Project> {
+    projects
+        .iter()
+        .find(|p| p.id.as_str().eq_ignore_ascii_case(name) || p.name.eq_ignore_ascii_case(name))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     NeedsAction,
