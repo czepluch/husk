@@ -77,6 +77,8 @@ pub enum Bucket {
 pub struct Input {
     pub kind: InputKind,
     pub buffer: String,
+    /// Cursor position in the buffer, counted in characters.
+    pub cursor: usize,
     /// What the buffer started as; an unchanged prompt changes nothing.
     pub initial: String,
     /// The task being edited; none for quick add.
@@ -118,6 +120,8 @@ pub struct App {
     /// The mode an action was started from, restored when it ends.
     pub return_to: Mode,
     pub filter: String,
+    /// Cursor position in the filter, counted in characters.
+    pub filter_cursor: usize,
     /// Whether completed and cancelled tasks are shown in the current view.
     pub show_done: bool,
     /// Lines scrolled off the top of the detail view.
@@ -163,6 +167,7 @@ impl App {
             help_from: Mode::Normal,
             return_to: Mode::Normal,
             filter: String::new(),
+            filter_cursor: 0,
             show_done: false,
             detail_scroll: 0,
             input: None,
@@ -368,7 +373,10 @@ impl App {
         match code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('?') => self.open_help(),
-            KeyCode::Char('/') => self.mode = Mode::Filter,
+            KeyCode::Char('/') => {
+                self.filter_cursor = self.filter.chars().count();
+                self.mode = Mode::Filter;
+            }
             KeyCode::Char('c') => self.show_done = !self.show_done,
             KeyCode::Tab | KeyCode::BackTab => {
                 self.pane = match self.pane {
@@ -480,6 +488,7 @@ impl App {
         self.input = Some(Input {
             kind,
             initial: buffer.clone(),
+            cursor: buffer.chars().count(),
             buffer,
             uid,
         });
@@ -491,14 +500,11 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.filter.clear();
+                self.filter_cursor = 0;
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => self.mode = Mode::Normal,
-            KeyCode::Backspace => {
-                self.filter.pop();
-            }
-            KeyCode::Char(c) if plain(key) => self.filter.push(c),
-            _ => {}
+            _ => edit_key(&mut self.filter, &mut self.filter_cursor, key),
         }
         self.reset_cursor();
     }
@@ -521,15 +527,10 @@ impl App {
                     self.input = Some(input);
                 }
             },
-            KeyCode::Backspace => {
-                input.buffer.pop();
+            _ => {
+                edit_key(&mut input.buffer, &mut input.cursor, key);
                 self.input = Some(input);
             }
-            KeyCode::Char(c) if plain(key) => {
-                input.buffer.push(c);
-                self.input = Some(input);
-            }
-            _ => self.input = Some(input),
         }
     }
 
@@ -982,6 +983,76 @@ fn push_tree<'a>(
             push_tree(kid, depth + 1, children, out, seen);
         }
     }
+}
+
+/// Applies a line-editing key to `text` at `cursor`, a position counted in
+/// characters: the arrows move (Ctrl by a word), Home and End jump,
+/// Backspace and Delete remove around the cursor, and a plain character is
+/// inserted at it.
+fn edit_key(text: &mut String, cursor: &mut usize, key: KeyEvent) {
+    let chars = text.chars().count();
+    *cursor = (*cursor).min(chars);
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Left if ctrl => *cursor = word_left(text, *cursor),
+        KeyCode::Right if ctrl => *cursor = word_right(text, *cursor),
+        KeyCode::Left => *cursor = cursor.saturating_sub(1),
+        KeyCode::Right => *cursor = (*cursor + 1).min(chars),
+        KeyCode::Home => *cursor = 0,
+        KeyCode::End => *cursor = chars,
+        KeyCode::Backspace => {
+            if *cursor > 0 {
+                *cursor -= 1;
+                remove_at(text, *cursor);
+            }
+        }
+        KeyCode::Delete => remove_at(text, *cursor),
+        KeyCode::Char(c) if plain(key) => {
+            text.insert(byte_of(text, *cursor), c);
+            *cursor += 1;
+        }
+        _ => {}
+    }
+}
+
+/// The byte index of the character at `cursor`, or the end of `text`.
+pub fn byte_of(text: &str, cursor: usize) -> usize {
+    text.char_indices()
+        .nth(cursor)
+        .map_or(text.len(), |(at, _)| at)
+}
+
+fn remove_at(text: &mut String, cursor: usize) {
+    if let Some((at, _)) = text.char_indices().nth(cursor) {
+        text.remove(at);
+    }
+}
+
+/// The start of the word before the cursor.
+fn word_left(text: &str, cursor: usize) -> usize {
+    let before: Vec<char> = text.chars().take(cursor).collect();
+    let space = before
+        .iter()
+        .rev()
+        .take_while(|c| c.is_whitespace())
+        .count();
+    let word = before[..before.len() - space]
+        .iter()
+        .rev()
+        .take_while(|c| !c.is_whitespace())
+        .count();
+    cursor - space - word
+}
+
+/// The start of the word after the cursor.
+fn word_right(text: &str, cursor: usize) -> usize {
+    let after: Vec<char> = text.chars().skip(cursor).collect();
+    let word = after.iter().take_while(|c| !c.is_whitespace()).count();
+    let space = after[word..]
+        .iter()
+        .take_while(|c| c.is_whitespace())
+        .count();
+    cursor + word + space
 }
 
 fn plain(key: KeyEvent) -> bool {

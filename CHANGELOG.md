@@ -5,6 +5,10 @@ Keep a Changelog.
 
 ## Unreleased
 
+- Prompts and the filter got a movable cursor: arrows (Ctrl jumps a
+  word), Home/End, Delete, and typing inserts at the cursor, instead of
+  append and backspace only.
+
 - The theme hot reload no longer fires when something merely reads the
   config directory, which the notify timer and a Waybar interval do
   constantly; only an event that can change a file reloads the theme.

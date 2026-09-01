@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap}
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::app::{
-    App, Bucket, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text, bucket, due_detail,
+    App, Bucket, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text, bucket, byte_of, due_detail,
     due_label, stamp,
 };
 use crate::model::{Priority, Status, Task};
@@ -462,11 +462,15 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let [left, right] =
         Layout::horizontal([Constraint::Min(1), Constraint::Length(status_width)]).areas(area);
     let line = match app.mode {
-        Mode::Filter => Line::from(vec![
-            Span::styled(" /", theme.help_key),
-            Span::styled(app.filter.clone(), theme.base),
-            Span::styled("▌", theme.accent),
-        ]),
+        Mode::Filter => {
+            let (before, after) = app.filter.split_at(byte_of(&app.filter, app.filter_cursor));
+            Line::from(vec![
+                Span::styled(" /", theme.help_key),
+                Span::styled(before.to_string(), theme.base),
+                Span::styled("▌", theme.accent),
+                Span::styled(after.to_string(), theme.base),
+            ])
+        }
         Mode::Input => prompt_line(app, theme),
         Mode::Confirm => Line::from(vec![
             Span::styled(
@@ -570,10 +574,12 @@ fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
     // The hint is a placeholder: shown while the line is empty, gone once
     // typing starts, so nothing shifts under the cursor.
     let placeholder = if input.buffer.is_empty() { hint } else { "" };
+    let (before, after) = input.buffer.split_at(byte_of(&input.buffer, input.cursor));
     Line::from(vec![
         Span::styled(format!(" {prompt}> "), theme.help_key),
-        Span::styled(input.buffer.clone(), theme.base),
+        Span::styled(before.to_string(), theme.base),
         Span::styled("▌", theme.accent),
+        Span::styled(after.to_string(), theme.base),
         Span::styled(placeholder.to_string(), theme.muted),
     ])
 }
@@ -627,6 +633,7 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
         ("m / n", "move to a project / edit notes in $EDITOR"),
         ("o", "edit the raw .ics in $EDITOR (the UID must stay)"),
         ("/", "filter by text; Enter keeps it, Esc clears it"),
+        ("arrows", "move the cursor in a prompt; Ctrl jumps a word"),
         ("c", "show or hide completed tasks"),
         ("s", "sync now"),
         ("?", "this help"),

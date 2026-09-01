@@ -60,6 +60,14 @@ fn type_text(app: &mut App, text: &str) {
     }
 }
 
+fn ctrl(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::CONTROL)
+}
+
+fn buffer(app: &App) -> String {
+    app.input.as_ref().expect("an open prompt").buffer.clone()
+}
+
 fn clear_input(app: &mut App) {
     for _ in 0..80 {
         app.handle_key(code(KeyCode::Backspace));
@@ -1059,4 +1067,67 @@ fn typed_text_in_prompts_uses_the_normal_foreground_not_the_muted_bar_color() {
         .unwrap()
         .style();
     assert_eq!(typed.fg, theme.base.fg, "filter text too");
+}
+
+#[test]
+fn prompt_cursor_moves_and_edits_in_place() {
+    let mut s = sample();
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "pay rent fri");
+    for _ in 0..3 {
+        s.app.handle_key(code(KeyCode::Left));
+    }
+    type_text(&mut s.app, "on ");
+    assert_eq!(buffer(&s.app), "pay rent on fri");
+    s.app.handle_key(code(KeyCode::Home));
+    s.app.handle_key(code(KeyCode::Delete));
+    assert_eq!(buffer(&s.app), "ay rent on fri");
+    type_text(&mut s.app, "P");
+    assert_eq!(buffer(&s.app), "Pay rent on fri");
+    s.app.handle_key(ctrl(KeyCode::Right));
+    s.app.handle_key(ctrl(KeyCode::Right));
+    s.app.handle_key(code(KeyCode::Backspace));
+    assert_eq!(
+        buffer(&s.app),
+        "Pay renton fri",
+        "ctrl-right lands at a word start"
+    );
+    s.app.handle_key(ctrl(KeyCode::Left));
+    type_text(&mut s.app, "x ");
+    assert_eq!(buffer(&s.app), "Pay x renton fri");
+    s.app.handle_key(code(KeyCode::End));
+    s.app.handle_key(code(KeyCode::Delete));
+    assert_eq!(
+        buffer(&s.app),
+        "Pay x renton fri",
+        "delete at the end changes nothing"
+    );
+    s.app.handle_key(code(KeyCode::Esc));
+
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "\u{e6}\u{e5}");
+    s.app.handle_key(code(KeyCode::Left));
+    type_text(&mut s.app, "\u{f8}");
+    assert_eq!(
+        buffer(&s.app),
+        "\u{e6}\u{f8}\u{e5}",
+        "edits land on character boundaries"
+    );
+    s.app.handle_key(code(KeyCode::Esc));
+}
+
+#[test]
+fn the_filter_edits_at_a_cursor_and_reopens_with_it_at_the_end() {
+    let mut s = sample();
+    s.app.handle_key(key('/'));
+    type_text(&mut s.app, "ol");
+    s.app.handle_key(code(KeyCode::Left));
+    type_text(&mut s.app, "i");
+    assert_eq!(s.app.filter, "oil");
+    s.app.handle_key(code(KeyCode::Enter));
+    s.app.handle_key(key('/'));
+    type_text(&mut s.app, "s");
+    assert_eq!(s.app.filter, "oils", "reopening puts the cursor at the end");
+    s.app.handle_key(code(KeyCode::Esc));
+    assert!(s.app.filter.is_empty());
 }
