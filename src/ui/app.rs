@@ -194,10 +194,7 @@ impl App {
     }
 
     pub fn project_name(&self, id: &ProjectId) -> String {
-        self.projects
-            .iter()
-            .find(|p| &p.id == id)
-            .map_or_else(|| id.as_str().to_string(), |p| p.name.clone())
+        crate::model::project_name(&self.projects, id)
     }
 
     /// A project by directory name or display name, case-insensitively.

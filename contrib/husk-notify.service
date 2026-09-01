@@ -6,3 +6,5 @@ Description=husk desktop notifications for due tasks
 [Service]
 Type=oneshot
 ExecStart=%h/.cargo/bin/husk notify
+# A hung notification daemon must not leave the unit activating forever.
+TimeoutStartSec=30s

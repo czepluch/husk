@@ -4,7 +4,8 @@
 //! the first fires nothing, and runs missed while the laptop slept fire
 //! everything that came due in between, once.
 
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -14,10 +15,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::alarms::{fire_times, is_overdue};
 use crate::config::Config;
-use crate::model::{Due, Project, Task};
+use crate::model::{Due, Project, Task, project_name};
 
 /// Fired entries older than this are forgotten.
 const KEEP_DAYS: i64 = 30;
+/// How far back a run looks even if the previous run was more recent, so an
+/// alarm that reaches the vdir after its time (a reminder set on the phone
+/// minutes ahead, synced by the timer) still fires once.
+const GRACE_MINUTES: i64 = 15;
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct State {
@@ -40,13 +45,28 @@ impl State {
             .map(|dir| dir.join("husk").join("notify.json"))
     }
 
-    /// A missing file is an empty state; a broken one is an error.
+    /// A missing file is an empty state. A file that does not parse is
+    /// moved aside and treated as empty too, so one bad write cannot keep
+    /// every later run from working; at most one minute of alarms is lost.
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
         }
         let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+        match serde_json::from_str(&text) {
+            Ok(state) => Ok(state),
+            Err(e) => {
+                let aside = path.with_extension("json.corrupt");
+                fs::rename(path, &aside)
+                    .with_context(|| format!("move {} aside", path.display()))?;
+                eprintln!(
+                    "husk: {} did not parse ({e}); moved to {} and starting fresh",
+                    path.display(),
+                    aside.display()
+                );
+                Ok(Self::default())
+            }
+        }
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -55,7 +75,9 @@ impl State {
         }
         let text = serde_json::to_string_pretty(self)?;
         let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, text).with_context(|| format!("write {}", tmp.display()))?;
+        let mut file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
         fs::rename(&tmp, path).with_context(|| format!("rename to {}", path.display()))
     }
 }
@@ -73,8 +95,9 @@ pub struct Notice {
 }
 
 /// What to fire now: every alarm of a pending task that came due after the
-/// last run and up to now, unless already fired. With `nag`, every overdue
-/// pending task as well. Returns the notices and the state to save.
+/// last run (or within the grace window, whichever is earlier) and up to
+/// now, unless already fired. With `nag`, every overdue pending task as
+/// well. Returns the notices and the state to save.
 pub fn plan(
     tasks: &[Task],
     projects: &[Project],
@@ -84,7 +107,9 @@ pub fn plan(
     nag: bool,
 ) -> (Vec<Notice>, State) {
     // On the very first run nothing has "come due since", so nothing fires.
-    let since = state.last_run.unwrap_or(now);
+    let since = state.last_run.map_or(now, |last| {
+        last.min(now - TimeDelta::minutes(GRACE_MINUTES))
+    });
     let cutoff = now - TimeDelta::days(KEEP_DAYS);
     let mut fired: Vec<Fired> = state
         .fired
@@ -94,10 +119,7 @@ pub fn plan(
         .collect();
     let mut notices = Vec::new();
     for task in tasks.iter().filter(|t| !t.is_done()) {
-        let project = projects
-            .iter()
-            .find(|p| p.id == task.project)
-            .map_or_else(|| task.project.as_str().to_string(), |p| p.name.clone());
+        let project = project_name(projects, &task.project);
         for at in fire_times(task, &config.default_alarm_leads) {
             let key = Fired {
                 uid: task.uid.clone(),
@@ -156,13 +178,19 @@ fn due_text(due: Option<Due>, config: &Config) -> String {
     }
 }
 
-/// Shows one notice through the desktop notification daemon.
+/// Shows one notice through the desktop notification daemon. The body is
+/// escaped because daemons like mako read it as Pango markup.
 pub fn send(notice: &Notice) -> Result<()> {
     use notify_rust::{Notification, Urgency};
+    let body = notice
+        .body
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     Notification::new()
         .appname("husk")
         .summary(&notice.title)
-        .body(&notice.body)
+        .body(&body)
         .urgency(if notice.urgent {
             Urgency::Critical
         } else {
@@ -173,8 +201,7 @@ pub fn send(notice: &Notice) -> Result<()> {
     Ok(())
 }
 
-/// Plans, sends and saves. A notice whose delivery fails is not marked as
-/// fired, so the next run tries it again. Returns how many were shown.
+/// Plans, sends and saves. Returns how many were shown.
 /// A dry run prints what would fire and changes nothing.
 pub fn run(
     tasks: &[Task],
@@ -185,6 +212,25 @@ pub fn run(
     nag: bool,
     dry_run: bool,
 ) -> Result<usize> {
+    run_with(tasks, projects, path, now, config, nag, dry_run, send)
+}
+
+/// `run` with the sender injected. When a remembered notice cannot be
+/// delivered it is not marked fired and `last_run` stays where it was, so
+/// the next run tries again; the fired set keeps the delivered ones from
+/// repeating. Two runs at once are serialized by a lock next to the file.
+#[allow(clippy::too_many_arguments)]
+pub fn run_with(
+    tasks: &[Task],
+    projects: &[Project],
+    path: &Path,
+    now: DateTime<Utc>,
+    config: &Config,
+    nag: bool,
+    dry_run: bool,
+    mut sender: impl FnMut(&Notice) -> Result<()>,
+) -> Result<usize> {
+    let _lock = if dry_run { None } else { Some(lock(path)?) };
     let state = State::load(path)?;
     let (notices, mut next) = plan(tasks, projects, &state, now, config, nag);
     if dry_run {
@@ -201,12 +247,13 @@ pub fn run(
     let mut sent = 0;
     let mut failures = Vec::new();
     for notice in &notices {
-        match send(notice) {
+        match sender(notice) {
             Ok(()) => sent += 1,
             Err(e) => {
                 if notice.remember {
                     next.fired
                         .retain(|f| !(f.uid == notice.uid && f.at == notice.at));
+                    next.last_run = state.last_run;
                 }
                 failures.push(format!("{e:#}"));
             }
@@ -221,4 +268,16 @@ pub fn run(
         );
     }
     Ok(sent)
+}
+
+fn lock(path: &Path) -> Result<File> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+    let lock_path = path.with_extension("lock");
+    let file =
+        File::create(&lock_path).with_context(|| format!("create {}", lock_path.display()))?;
+    file.lock()
+        .with_context(|| format!("lock {}", lock_path.display()))?;
+    Ok(file)
 }

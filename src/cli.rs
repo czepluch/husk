@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::alarms::default_alarms;
 use crate::config::Config;
-use crate::model::{Due, NewTask, Priority, Project, ProjectId, Task, find_project};
+use crate::model::{Due, NewTask, Priority, Project, ProjectId, Task, find_project, project_name};
 use crate::quickadd;
 use crate::store::Store;
 use crate::ui::app::{Bucket, View, bucket, due_label, in_view, sort_key};
@@ -26,7 +26,6 @@ pub struct Row {
     pub overdue: bool,
     pub priority: &'static str,
     pub tags: Vec<String>,
-    pub done: bool,
     pub recurring: bool,
 }
 
@@ -50,10 +49,7 @@ pub fn rows(
         .map(|task| Row {
             uid: task.uid.clone(),
             summary: task.summary.clone(),
-            project: projects
-                .iter()
-                .find(|p| p.id == task.project)
-                .map_or_else(|| task.project.as_str().to_string(), |p| p.name.clone()),
+            project: project_name(projects, &task.project),
             project_id: task.project.as_str().to_string(),
             due: task.due.map(|due| match due {
                 Due::Date(date) => date.format("%Y-%m-%d").to_string(),
@@ -68,17 +64,18 @@ pub fn rows(
                 Priority::None => "none",
             },
             tags: task.tags.clone(),
-            done: task.is_done(),
             recurring: task.is_recurring(),
         })
         .collect()
 }
 
-/// One line per task: due label, priority marker, title, tags, project.
+/// One line per task: overdue mark, due label, priority marker, title,
+/// tags, project.
 pub fn text(rows: &[Row]) -> String {
     let width = rows.iter().map(|r| r.due_label.len()).max().unwrap_or(1);
     let mut out = String::new();
     for row in rows {
+        let flag = if row.overdue { "◂" } else { " " };
         let marker = match row.priority {
             "high" => "!!!",
             "medium" => "!!",
@@ -87,7 +84,7 @@ pub fn text(rows: &[Row]) -> String {
         };
         let tags: String = row.tags.iter().map(|t| format!(" #{t}")).collect();
         out.push_str(&format!(
-            "{:<width$}  {marker:<3} {}{tags}  [{}]\n",
+            "{flag} {:<width$}  {marker:<3} {}{tags}  [{}]\n",
             row.due_label, row.summary, row.project
         ));
     }

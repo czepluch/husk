@@ -45,6 +45,11 @@ fn list_prints_text_and_json_with_view_and_project_filters() {
     assert!(ok, "{err}");
     assert!(out.contains("Remember the milk"), "{out}");
     assert!(out.contains("!!! Imp"), "{out}");
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("◂ ") && l.contains("Imp")),
+        "overdue rows are marked:\n{out}"
+    );
     assert!(out.contains("[Life]") && out.contains("[Argot]"), "{out}");
 
     let (ok, out, _) = husk(&s, &["list", "--view", "all", "--json"]);
@@ -58,7 +63,7 @@ fn list_prints_text_and_json_with_view_and_project_filters() {
         .unwrap();
     assert_eq!(milk["project"], "Life");
     assert_eq!(milk["priority"], "none");
-    assert_eq!(milk["done"], false);
+    assert!(milk.get("done").is_none(), "no always-false field");
     assert!(milk["due"].as_str().unwrap().starts_with("2026-08-31T"));
     let parent = rows.iter().find(|r| r["summary"] == "Parent").unwrap();
     assert_eq!(parent["tags"], serde_json::json!(["Testing"]));
@@ -82,6 +87,22 @@ fn list_prints_text_and_json_with_view_and_project_filters() {
     let (ok, _, err) = husk(&s, &["list", "--project", "nope"]);
     assert!(!ok);
     assert!(err.contains("nope"), "{err}");
+
+    fs::create_dir_all(s.dir.path().join("faelles")).unwrap();
+    fs::write(s.dir.path().join("faelles/displayname"), "Fælles & Børn\n").unwrap();
+    let (ok, out, err) = husk(
+        &s,
+        &[
+            "list",
+            "--view",
+            "all",
+            "--project",
+            "FÆLLES & BØRN",
+            "--json",
+        ],
+    );
+    assert!(ok, "case folding beyond ASCII: {err}");
+    assert_eq!(out.trim(), "[]");
 }
 
 #[test]
@@ -201,4 +222,21 @@ fn version_and_help_work_without_a_config() {
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&output.stdout).contains("due:fri"));
+}
+
+#[test]
+fn add_reports_a_failed_sync_but_keeps_the_task() {
+    let s = setup("\"sh\", \"-c\", \"echo boom >&2; exit 7\"");
+    let (ok, out, err) = husk(&s, &["add", "Survives", "the", "sync"]);
+    assert!(!ok);
+    assert!(out.contains("Added: Survives the sync"), "{out}");
+    assert!(err.contains("boom"), "{err}");
+    assert!(
+        fs::read_dir(s.dir.path().join("life"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| fs::read_to_string(e.path())
+                .unwrap_or_default()
+                .contains("SUMMARY:Survives the sync"))
+    );
 }

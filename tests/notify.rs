@@ -6,7 +6,7 @@ use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use husk::config::Config;
 use husk::ical::vtodo;
 use husk::model::{Project, ProjectId, Task};
-use husk::notify::{Fired, Notice, State, plan};
+use husk::notify::{Fired, Notice, State, plan, run_with};
 
 fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(y, mo, d, h, mi, s).unwrap()
@@ -223,5 +223,167 @@ fn the_state_file_round_trips_and_a_missing_one_is_empty() {
     assert!(fs::read_to_string(&path).unwrap().contains("\"last_run\""));
 
     fs::write(&path, "{ not json").unwrap();
-    assert!(State::load(&path).is_err());
+    assert_eq!(
+        State::load(&path).unwrap(),
+        State::default(),
+        "a broken file starts fresh"
+    );
+    assert!(!path.exists());
+    assert!(
+        path.with_extension("json.corrupt").exists(),
+        "and is kept aside"
+    );
+}
+
+#[test]
+fn the_window_is_open_after_the_last_run_and_closed_at_it() {
+    let config = Config::default();
+    let at = utc(2026, 8, 31, 10, 25, 0);
+    let (notices, _) = plan(
+        &tasks(),
+        &projects(),
+        &state_at(at),
+        at + TimeDelta::minutes(30),
+        &config,
+        false,
+    );
+    assert!(
+        !notices.iter().any(|n| n.at == at),
+        "an alarm exactly at last_run was the previous run's, unless the grace window applies"
+    );
+    let (notices, _) = plan(
+        &tasks(),
+        &projects(),
+        &state_at(at - TimeDelta::hours(1)),
+        at,
+        &config,
+        false,
+    );
+    assert!(
+        notices.iter().any(|n| n.at == at),
+        "an alarm exactly at now fires"
+    );
+}
+
+#[test]
+fn an_alarm_that_arrived_late_still_fires_within_the_grace_window() {
+    let config = Config::default();
+    // The previous run was a minute ago, but the alarm at 10:25Z reached
+    // the vdir only now, ten minutes after its time.
+    let now = utc(2026, 8, 31, 10, 35, 0);
+    let (notices, state) = plan(
+        &tasks(),
+        &projects(),
+        &state_at(now - TimeDelta::minutes(1)),
+        now,
+        &config,
+        false,
+    );
+    assert_eq!(titles(&notices), vec!["Remember the milk"]);
+    let (again, _) = plan(
+        &tasks(),
+        &projects(),
+        &state,
+        now + TimeDelta::minutes(1),
+        &config,
+        false,
+    );
+    assert!(
+        again.is_empty(),
+        "the fired set keeps the grace window from repeating it"
+    );
+    let late = utc(2026, 8, 31, 10, 41, 0);
+    let (nothing, _) = plan(
+        &tasks(),
+        &projects(),
+        &state_at(late - TimeDelta::minutes(1)),
+        late,
+        &config,
+        false,
+    );
+    assert!(
+        nothing.is_empty(),
+        "sixteen minutes late is outside the window"
+    );
+}
+
+#[test]
+fn a_last_run_in_the_future_fires_nothing_and_corrects_itself() {
+    let now = utc(2026, 8, 31, 12, 0, 0);
+    let (notices, state) = plan(
+        &tasks(),
+        &projects(),
+        &state_at(now + TimeDelta::days(1)),
+        now,
+        &Config::default(),
+        false,
+    );
+    assert!(notices.is_empty());
+    assert_eq!(state.last_run, Some(now));
+}
+
+#[test]
+fn a_failed_delivery_is_retried_on_the_next_run() {
+    let dir = common::TempDir::new();
+    let path = dir.path().join("notify.json");
+    let config = Config::default();
+    state_at(utc(2026, 8, 31, 10, 20, 0)).save(&path).unwrap();
+    let now = utc(2026, 8, 31, 10, 30, 0);
+
+    let failing = |_: &Notice| anyhow::bail!("no daemon");
+    let err = run_with(
+        &tasks(),
+        &projects(),
+        &path,
+        now,
+        &config,
+        false,
+        false,
+        failing,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("1 of 1"), "{err}");
+    let saved = State::load(&path).unwrap();
+    assert_eq!(
+        saved.last_run,
+        Some(utc(2026, 8, 31, 10, 20, 0)),
+        "the window stays open"
+    );
+    assert!(saved.fired.is_empty(), "not marked fired");
+
+    let mut delivered = Vec::new();
+    let later = now + TimeDelta::minutes(1);
+    let shown = run_with(
+        &tasks(),
+        &projects(),
+        &path,
+        later,
+        &config,
+        false,
+        false,
+        |n| {
+            delivered.push(n.title.clone());
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(shown, 1);
+    assert_eq!(delivered, vec!["Remember the milk"]);
+    let saved = State::load(&path).unwrap();
+    assert_eq!(saved.last_run, Some(later));
+    assert_eq!(saved.fired.len(), 1);
+    assert!(path.with_extension("lock").exists());
+
+    let shown = run_with(
+        &tasks(),
+        &projects(),
+        &path,
+        later + TimeDelta::minutes(1),
+        &config,
+        false,
+        false,
+        |_| panic!("nothing left to send"),
+    )
+    .unwrap();
+    assert_eq!(shown, 0);
 }

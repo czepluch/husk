@@ -30,9 +30,18 @@ pub struct Project {
 
 /// A project by directory name or display name, case-insensitively.
 pub fn find_project<'a>(projects: &'a [Project], name: &str) -> Option<&'a Project> {
+    let wanted = name.trim().to_lowercase();
     projects
         .iter()
-        .find(|p| p.id.as_str().eq_ignore_ascii_case(name) || p.name.eq_ignore_ascii_case(name))
+        .find(|p| p.id.as_str().to_lowercase() == wanted || p.name.to_lowercase() == wanted)
+}
+
+/// A project's display name, or its directory name when it is not listed.
+pub fn project_name(projects: &[Project], id: &ProjectId) -> String {
+    projects
+        .iter()
+        .find(|p| &p.id == id)
+        .map_or_else(|| id.as_str().to_string(), |p| p.name.clone())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

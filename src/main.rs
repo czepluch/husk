@@ -1,14 +1,13 @@
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use husk::config::Config;
-use husk::model::{ProjectId, find_project};
+use husk::model::{ProjectId, find_project, project_name};
 use husk::notify::State;
 use husk::store::{Store, VdirStore};
-use husk::sync::{self, Syncer};
+use husk::sync;
 use husk::theme::Theme;
 use husk::ui::app::{App, View};
 use husk::{cli, ui};
@@ -84,17 +83,13 @@ fn main() -> Result<()> {
         }
         Command::Add { text } => {
             let task = cli::add(&store, &config, &text.join(" "), Local::now())?;
-            let projects = store.projects()?;
-            let project = projects
-                .iter()
-                .find(|p| p.id == task.project)
-                .map_or_else(|| task.project.as_str().to_string(), |p| p.name.clone());
+            let project = project_name(&store.projects()?, &task.project);
             println!("Added: {} [{project}]", task.summary);
-            let syncer = Syncer::new(config.sync_command.clone());
-            syncer.request();
-            syncer.flush(Duration::from_secs(60));
-            if let Some(error) = syncer.state().last_error {
-                eprintln!("husk: {error}");
+            // In the foreground, so a keybind can rely on the exit code.
+            if !config.sync_command.is_empty()
+                && let Err(error) = sync::run(&config.sync_command)
+            {
+                bail!("task added, but the sync failed: {error}");
             }
             Ok(())
         }
