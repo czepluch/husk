@@ -146,8 +146,8 @@ fn add_creates_a_task_and_runs_the_sync_command() {
     assert!(text.contains("PRIORITY:9"), "{text}");
     assert_eq!(
         text.matches("BEGIN:VALARM").count(),
-        3,
-        "timed due gets the default alarms"
+        1,
+        "a timed due gets the default alarm"
     );
     assert!(marker.exists(), "add waits for the sync command to finish");
 

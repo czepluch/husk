@@ -42,7 +42,7 @@ default_project = "Life"                # for quick add outside a project view
 sync_command = ["vdirsyncer", "sync"]   # an empty list turns syncing off
 date_format = "%Y-%m-%d"
 time_format = "%H:%M"
-default_alarm_leads = ["1d", "1h", "0m"]
+default_alarm_leads = ["0m"]                # one alarm, at the due time
 theme = "phosphor"                      # phosphor, ansi, or a Base16 scheme file
 ```
 
@@ -76,9 +76,10 @@ Quick add reads `due:` (`today`, `tomorrow`, `fri`, `next mon`, `+2d`,
 `pri:H|M|L`, `+tag` and `@list`. Anything else is the title. The due prompt
 (`t`) takes the same date words; an empty answer clears the date.
 
-Setting a time on a task that has no alarms adds the ones from
-`default_alarm_leads`, which is what makes the phones notify too; existing
-alarms are left alone.
+Setting a time on a task that has no alarms adds the alarm from
+`default_alarm_leads` (at the due time by default), which is what makes the
+phones notify too; existing alarms are left alone. Apple Reminders shows a
+task's first alarm as its reminder time, so keep it to one.
 
 ## The CLI
 

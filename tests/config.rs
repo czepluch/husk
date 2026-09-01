@@ -14,7 +14,7 @@ fn defaults_match_the_spec() {
     assert_eq!(config.sync_command, ["vdirsyncer", "sync"]);
     assert_eq!(config.date_format, "%Y-%m-%d");
     assert_eq!(config.time_format, "%H:%M");
-    assert_eq!(config.default_alarm_leads, ["1d", "1h", "0m"]);
+    assert_eq!(config.default_alarm_leads, ["0m"]);
     assert_eq!(config.theme, "phosphor");
 }
 

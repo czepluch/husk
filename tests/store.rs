@@ -3,6 +3,7 @@ mod common;
 use std::fs;
 
 use chrono::{DateTime, TimeZone, Utc};
+use husk::ical::vtodo;
 use husk::model::{Due, NewTask, Priority, ProjectId};
 use husk::store::{Store, VdirStore};
 
@@ -121,7 +122,15 @@ fn create_writes_a_uid_named_file_and_returns_the_task() {
     let path = dir.path().join(format!("life/{}.ics", task.uid));
     let text = fs::read_to_string(&path).unwrap();
     assert!(text.contains("SUMMARY:Created here\r\n"), "{text}");
-    assert!(text.contains("DUE:20260831T140000Z\r\n"), "{text}");
+    let due = match vtodo::local_zone() {
+        Some(tz) => format!(
+            "DUE;TZID={}:{}\r\n",
+            tz.name(),
+            clock().with_timezone(&tz).format("%Y%m%dT%H%M%S")
+        ),
+        None => "DUE:20260831T140000Z\r\n".to_string(),
+    };
+    assert!(text.contains(&due), "{text}");
     assert_eq!(
         store.tasks(Some(&life())).unwrap().len(),
         common::vdir_task_counts().0 + 1

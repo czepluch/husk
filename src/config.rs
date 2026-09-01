@@ -27,7 +27,7 @@ impl Default for Config {
             sync_command: vec!["vdirsyncer".to_string(), "sync".to_string()],
             date_format: "%Y-%m-%d".to_string(),
             time_format: "%H:%M".to_string(),
-            default_alarm_leads: vec!["1d".to_string(), "1h".to_string(), "0m".to_string()],
+            default_alarm_leads: vec!["0m".to_string()],
             theme: "phosphor".to_string(),
         }
     }

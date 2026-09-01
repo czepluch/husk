@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Local, TimeZone};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use husk::config::Config;
+use husk::ical::vtodo;
 use husk::store::VdirStore;
 use husk::theme::Theme;
 use husk::ui::app::{App, EditorRequest, Mode};
@@ -63,6 +64,18 @@ fn clear_input(app: &mut App) {
     for _ in 0..80 {
         app.handle_key(code(KeyCode::Backspace));
     }
+}
+
+/// The DUE line husk writes for a local wall time, in the zone in effect.
+fn due_line(y: i32, m: u32, d: u32, h: u32, mi: u32) -> String {
+    let tz = vtodo::local_zone().expect("a known local zone");
+    let wall = Local
+        .with_ymd_and_hms(y, m, d, h, mi, 0)
+        .single()
+        .unwrap()
+        .with_timezone(&tz)
+        .format("%Y%m%dT%H%M%S");
+    format!("DUE;TZID={}:{wall}", tz.name())
 }
 
 fn file(s: &Sample, rel: &str) -> String {
@@ -230,24 +243,26 @@ fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
     s.app.handle_key(code(KeyCode::Enter));
     assert_eq!(s.app.message.as_deref(), Some("Added: Call bank (u undo)"));
     let text = find_file(&s, "life", "SUMMARY:Call bank").expect("created in life");
-    let due = Local
-        .with_ymd_and_hms(2026, 9, 1, 9, 0, 0)
-        .single()
-        .unwrap()
-        .to_utc()
-        .format("DUE:%Y%m%dT%H%M%SZ")
-        .to_string();
+    let due = due_line(2026, 9, 1, 9, 0);
     for line in [
         due.as_str(),
         "CATEGORIES:money",
         "PRIORITY:1",
-        "TRIGGER;RELATED=END:-P1D",
-        "TRIGGER;RELATED=END:-PT1H",
         "TRIGGER;RELATED=END:PT0S",
+        "BEGIN:VTIMEZONE",
     ] {
-        assert!(text.contains(line), "{line} missing in\n{text}");
+        assert!(
+            text.contains(line),
+            "{line} missing in
+{text}"
+        );
     }
-    assert_eq!(text.matches("BEGIN:VALARM").count(), 3);
+    assert_eq!(
+        text.matches("BEGIN:VALARM").count(),
+        1,
+        "one alarm, at due:
+{text}"
+    );
     assert_eq!(s.app.selected_task().unwrap().summary, "Call bank");
 
     s.app.handle_key(key('u'));
@@ -343,18 +358,17 @@ fn e_t_p_and_upper_t_edit_the_selected_task() {
     type_text(&mut s.app, "fri 10:00");
     s.app.handle_key(code(KeyCode::Enter));
     let text = file(&s, "life/no-due.ics");
-    let due = Local
-        .with_ymd_and_hms(2026, 9, 4, 10, 0, 0)
-        .single()
-        .unwrap()
-        .to_utc()
-        .format("DUE:%Y%m%dT%H%M%SZ\n")
-        .to_string();
+    let due = format!(
+        "{}
+",
+        due_line(2026, 9, 4, 10, 0)
+    );
     assert!(text.contains(&due), "{text}");
     assert_eq!(
         text.matches("BEGIN:VALARM").count(),
-        3,
-        "alarms added with a timed due:\n{text}"
+        1,
+        "the default alarm added with a timed due:
+{text}"
     );
 
     s.app.handle_key(key('t'));
@@ -715,7 +729,7 @@ fn clearing_a_due_date_drops_relative_alarms_but_keeps_absolute_ones() {
     s.app.handle_key(code(KeyCode::Enter));
     assert_eq!(
         file(&s, "life/all-day.ics").matches("BEGIN:VALARM").count(),
-        3
+        1
     );
     s.app.handle_key(key('t'));
     clear_input(&mut s.app);

@@ -25,8 +25,8 @@ fn projects() -> Vec<Project> {
 }
 
 /// An absolute alarm at 2026-08-31 10:25Z; a timed task without alarms due
-/// 2026-09-01 08:00Z (so the default leads fire at 08-31 08:00Z, 09-01
-/// 07:00Z and 08:00Z); a completed task; an all-day task without alarms.
+/// 2026-09-01 08:00Z (the default lead fires at due); a completed task; an
+/// all-day task without alarms.
 fn tasks() -> Vec<Task> {
     vec![
         load("apple/timed-alarm.ics"),
@@ -130,20 +130,15 @@ fn missed_runs_fire_everything_since_the_last_run_once() {
     );
     assert_eq!(
         titles(&notices),
-        vec![
-            "From laptop via todoman",
-            "Remember the milk",
-            "From laptop via todoman",
-            "From laptop via todoman",
-        ],
+        vec!["Remember the milk", "From laptop via todoman"],
         "sorted by fire time"
     );
     assert_eq!(
         notices.iter().map(|n| n.urgent).collect::<Vec<_>>(),
-        vec![false, true, false, true],
-        "leads before the due time are not urgent"
+        vec![true, true],
+        "both fire at their due time"
     );
-    assert_eq!(state.fired.len(), 4);
+    assert_eq!(state.fired.len(), 2);
     let (again, _) = plan(&tasks(), &projects(), &state, now, &config, false);
     assert!(again.is_empty());
 }

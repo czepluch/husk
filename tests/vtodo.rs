@@ -1,6 +1,7 @@
 mod common;
 
 use chrono::{DateTime, Local, NaiveDate, TimeDelta, TimeZone, Utc};
+use chrono_tz::Tz;
 use husk::ical::codec;
 use husk::ical::vtodo::{self, format_duration, parse_duration};
 use husk::model::{Alarm, Anchor, Due, NewTask, Priority, ProjectId, Status, Task};
@@ -20,6 +21,12 @@ fn date(y: i32, m: u32, d: u32) -> NaiveDate {
 
 fn text_of(task: &Task) -> String {
     codec::serialize(&vtodo::apply(task).expect("apply"))
+}
+
+const CPH: Tz = Tz::Europe__Copenhagen;
+
+fn text_in(task: &Task, zone: Tz) -> String {
+    codec::serialize(&vtodo::apply_in(task, Some(zone)).expect("apply"))
 }
 
 /// Lines present in `after` that were not in `before`.
@@ -228,12 +235,103 @@ fn floating_times_are_local_and_stay_floating() {
 }
 
 #[test]
-fn new_timed_due_on_a_task_without_one_is_written_in_utc() {
+fn new_timed_due_is_written_in_the_local_zone_with_a_vtimezone() {
     let mut task = load("apple/no-due.ics");
     task.due = Some(Due::DateTime(utc(2026, 9, 3, 7, 0, 0)));
-    let after = text_of(&task);
-    assert!(after.contains("DUE:20260903T070000Z\n"), "{after}");
-    assert!(!after.contains("DTSTART"), "never adds DTSTART: {after}");
+    let after = text_in(&task, CPH);
+    assert!(
+        after.contains("DUE;TZID=Europe/Copenhagen:20260903T090000\n"),
+        "{after}"
+    );
+    let todo = after.split("BEGIN:VTODO").nth(1).unwrap();
+    assert!(!todo.contains("DTSTART"), "never adds DTSTART: {after}");
+    let tz_at = after
+        .find("BEGIN:VTIMEZONE")
+        .expect("a VTIMEZONE was added");
+    assert!(
+        tz_at < after.find("BEGIN:VTODO").unwrap(),
+        "before the VTODO:\n{after}"
+    );
+    assert!(after.contains("TZID:Europe/Copenhagen\n"), "{after}");
+    let again = vtodo::parse_task(&after, ProjectId::new("p")).unwrap();
+    assert_eq!(again.due, task.due, "same instant when read back");
+
+    let none = text_in_none(&task);
+    assert!(
+        none.contains("DUE:20260903T070000Z\n"),
+        "no zone known: UTC\n{none}"
+    );
+    assert!(!none.contains("VTIMEZONE"));
+}
+
+fn text_in_none(task: &Task) -> String {
+    codec::serialize(&vtodo::apply_in(task, None).expect("apply"))
+}
+
+#[test]
+fn a_utc_due_is_rewritten_in_the_zone_when_edited_and_apple_files_keep_theirs() {
+    let mut task = load("todoman/timed-utc.ics");
+    task.due = Some(Due::DateTime(utc(2026, 9, 2, 10, 0, 0)));
+    let after = text_in(&task, CPH);
+    assert!(
+        after.contains("DUE;TZID=Europe/Copenhagen:20260902T120000\r\n"),
+        "{after}"
+    );
+    assert_eq!(after.matches("BEGIN:VTIMEZONE").count(), 1, "{after}");
+
+    let mut apple = load("apple/timed-alarm.ics");
+    apple.due = Some(Due::DateTime(utc(2026, 9, 2, 10, 0, 0)));
+    let after = text_in(&apple, Tz::America__New_York);
+    assert!(
+        after.contains("DUE;TZID=Europe/Copenhagen:20260902T120000\n"),
+        "the file's own zone wins:\n{after}"
+    );
+    assert_eq!(
+        after.matches("BEGIN:VTIMEZONE").count(),
+        1,
+        "Apple's VTIMEZONE is left alone"
+    );
+}
+
+#[test]
+fn generated_vtimezones_carry_the_years_transitions() {
+    let text = codec::serialize(&husk::ical::codec::Document::new(vtodo::vtimezone(
+        CPH, 2026,
+    )));
+    for line in [
+        "TZID:Europe/Copenhagen",
+        "BEGIN:STANDARD\r\nDTSTART:20260101T000000\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0100\r\nTZNAME:CET",
+        "BEGIN:DAYLIGHT\r\nDTSTART:20260329T020000\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\nTZNAME:CEST",
+        "BEGIN:STANDARD\r\nDTSTART:20261025T030000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nTZNAME:CET",
+    ] {
+        assert!(text.contains(line), "missing {line:?} in\n{text}");
+    }
+    let utc_zone = codec::serialize(&husk::ical::codec::Document::new(vtodo::vtimezone(
+        Tz::UTC,
+        2026,
+    )));
+    assert_eq!(utc_zone.matches("BEGIN:STANDARD").count(), 1, "{utc_zone}");
+    assert!(!utc_zone.contains("DAYLIGHT"));
+    assert!(utc_zone.contains("TZOFFSETTO:+0000"));
+    let sydney = codec::serialize(&husk::ical::codec::Document::new(vtodo::vtimezone(
+        Tz::Australia__Sydney,
+        2026,
+    )));
+    assert!(
+        sydney.contains(
+            "BEGIN:DAYLIGHT\r\nDTSTART:20260101T000000\r\nTZOFFSETFROM:+1100\r\nTZOFFSETTO:+1100"
+        ),
+        "summer on 1 January:\n{sydney}"
+    );
+    assert_eq!(
+        sydney.matches("BEGIN:").count(),
+        4,
+        "VTIMEZONE plus three observances:\n{sydney}"
+    );
+    assert!(
+        vtodo::local_zone().is_some(),
+        "TZ or the system zone names a known zone"
+    );
 }
 
 #[test]
@@ -321,7 +419,7 @@ fn new_document_round_trips_through_the_reader() {
             },
         ],
     };
-    let doc = vtodo::new_document(&new, "abc-123", utc(2026, 8, 31, 13, 0, 0));
+    let doc = vtodo::new_document_in(&new, "abc-123", utc(2026, 8, 31, 13, 0, 0), Some(CPH));
     let text = codec::serialize(&doc);
     assert!(
         text.starts_with("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//husk//"),
@@ -336,7 +434,8 @@ fn new_document_round_trips_through_the_reader() {
         "STATUS:NEEDS-ACTION",
         r"SUMMARY:Book dentist\, soon",
         r"DESCRIPTION:line one\nline two",
-        "DUE:20260903T070000Z",
+        "DUE;TZID=Europe/Copenhagen:20260903T090000",
+        "TZID:Europe/Copenhagen",
         "PRIORITY:1",
         "CATEGORIES:health",
         "ACTION:DISPLAY",
@@ -455,7 +554,7 @@ fn edits_keep_a_property_s_other_parameters() {
 }
 
 #[test]
-fn unknown_tzid_reads_as_local_and_is_rewritten_in_utc() {
+fn unknown_tzid_reads_as_local_and_is_rewritten_in_a_known_zone() {
     let text = "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nUID:u\r\nDUE;TZID=W. Europe Standard Time:20260901T100000\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
     let mut task = vtodo::parse_task(text, ProjectId::new("p")).unwrap();
     let wall = date(2026, 9, 1).and_hms_opt(10, 0, 0).unwrap();
@@ -466,7 +565,16 @@ fn unknown_tzid_reads_as_local_and_is_rewritten_in_utc() {
         .to_utc();
     assert_eq!(task.due, Some(Due::DateTime(expected)));
     task.due = Some(Due::DateTime(utc(2026, 9, 2, 8, 0, 0)));
-    assert!(text_of(&task).contains("DUE:20260902T080000Z\r\n"));
+    let after = text_in(&task, CPH);
+    assert!(
+        after.contains("DUE;TZID=Europe/Copenhagen:20260902T100000\r\n"),
+        "{after}"
+    );
+    assert!(
+        after.contains("BEGIN:VTIMEZONE\r\nTZID:Europe/Copenhagen\r\n"),
+        "{after}"
+    );
+    assert!(text_in_none(&task).contains("DUE:20260902T080000Z\r\n"));
 }
 
 #[test]

@@ -11,8 +11,11 @@
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeDelta, TimeZone, Utc};
-use chrono_tz::Tz;
+use chrono::{
+    DateTime, Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeDelta, TimeZone,
+    Utc,
+};
+use chrono_tz::{OffsetComponents, OffsetName, Tz};
 
 use crate::ical::codec::{self, Component, Document, Entry, Param, Property};
 use crate::model::{Alarm, Anchor, Due, NewTask, Priority, ProjectId, Status, Task};
@@ -95,9 +98,121 @@ pub fn from_document(raw: Document, project: ProjectId) -> Result<Task> {
     })
 }
 
+/// The zone new timed values are written in: `TZ` if set, else the
+/// system zone. `None` when neither names a zone chrono-tz knows, in
+/// which case values are written in UTC.
+pub fn local_zone() -> Option<Tz> {
+    let name = std::env::var("TZ")
+        .ok()
+        .map(|tz| tz.trim_start_matches(':').to_string())
+        .filter(|tz| !tz.is_empty())
+        .or_else(|| iana_time_zone::get_timezone().ok())?;
+    Tz::from_str(&name).ok()
+}
+
+/// A VTIMEZONE for one zone covering one year: the observance in force on
+/// 1 January and one per transition found that year. Phone clients read the
+/// `TZID` and know the zone; the component is there so the file is valid on
+/// its own. Apple writes its own, fuller one, which is left alone.
+pub fn vtimezone(tz: Tz, year: i32) -> Component {
+    let mut component = Component::new("VTIMEZONE");
+    component.set(Property::new("TZID", tz.name()));
+    let at = |naive: NaiveDateTime| tz.offset_from_utc_datetime(&naive);
+    let first = NaiveDate::from_ymd_opt(year, 1, 1)
+        .unwrap_or_default()
+        .and_time(NaiveTime::MIN);
+    // The observance in force at local midnight on 1 January, then one per
+    // change of offset found by scanning the year a day, then an hour, at
+    // a time.
+    let mut previous = tz
+        .offset_from_local_datetime(&first)
+        .earliest()
+        .unwrap_or_else(|| at(first));
+    let wall = |utc: NaiveDateTime, offset: <Tz as TimeZone>::Offset| {
+        utc + TimeDelta::seconds(i64::from(offset.fix().local_minus_utc()))
+    };
+    component.push_child(observance(first, previous, previous));
+    let mut day = first;
+    while day.year() == year {
+        let next_day = day + TimeDelta::days(1);
+        let offset = at(next_day);
+        if offset.fix() != previous.fix() {
+            // The onset is recorded in the wall time of the observance
+            // being left, as RFC 5545 wants.
+            let mut hour = day;
+            while at(hour + TimeDelta::hours(1)).fix() == previous.fix() {
+                hour += TimeDelta::hours(1);
+            }
+            let onset_utc = hour + TimeDelta::hours(1);
+            component.push_child(observance(wall(onset_utc, previous), previous, offset));
+            previous = offset;
+        }
+        day = next_day;
+    }
+    component
+}
+
+fn observance(
+    onset_wall: NaiveDateTime,
+    from: <Tz as TimeZone>::Offset,
+    to: <Tz as TimeZone>::Offset,
+) -> Component {
+    let kind = if to.dst_offset().num_seconds() != 0 {
+        "DAYLIGHT"
+    } else {
+        "STANDARD"
+    };
+    let mut c = Component::new(kind);
+    c.set(Property::new(
+        "DTSTART",
+        onset_wall.format(DATE_TIME).to_string(),
+    ));
+    c.set(Property::new(
+        "TZOFFSETFROM",
+        utc_offset(from.fix().local_minus_utc()),
+    ));
+    c.set(Property::new(
+        "TZOFFSETTO",
+        utc_offset(to.fix().local_minus_utc()),
+    ));
+    if let Some(name) = to.abbreviation() {
+        c.set(Property::new("TZNAME", name));
+    }
+    c
+}
+
+/// `+0200` style offsets.
+fn utc_offset(seconds: i32) -> String {
+    let sign = if seconds < 0 { '-' } else { '+' };
+    let total = seconds.abs() / 60;
+    format!("{sign}{:02}{:02}", total / 60, total % 60)
+}
+
+/// Makes sure the file carries a VTIMEZONE for a zone used by a `TZID`.
+fn ensure_vtimezone(root: &mut Component, tz: Tz, year: i32) {
+    let present = root
+        .children()
+        .any(|c| c.is("VTIMEZONE") && c.prop("TZID").is_some_and(|p| p.value.trim() == tz.name()));
+    if present {
+        return;
+    }
+    let at = root
+        .entries
+        .iter()
+        .position(|e| matches!(e, Entry::Component(c) if c.is("VTODO")))
+        .unwrap_or(root.entries.len());
+    root.entries
+        .insert(at, Entry::Component(vtimezone(tz, year)));
+}
+
 /// The task's file with the model's changes patched in. Nothing else moves,
 /// and a task that was not changed yields a document equal to its raw one.
 pub fn apply(task: &Task) -> Result<Document> {
+    apply_in(task, local_zone())
+}
+
+/// `apply` with the zone for new timed values given explicitly.
+pub fn apply_in(task: &Task, zone: Option<Tz>) -> Result<Document> {
     let original = from_document(task.raw.clone(), task.project.clone())?;
     let mut doc = task.raw.clone();
     let todo = doc.root.child_mut("VTODO").context("no VTODO component")?;
@@ -113,8 +228,9 @@ pub fn apply(task: &Task) -> Result<Document> {
             }
         }
     }
+    let mut zone_used = None;
     if task.due != original.due {
-        set_due(todo, task.due);
+        zone_used = set_due(todo, task.due, zone);
     }
     if task.status != original.status || task.completed != original.completed {
         set_status(todo, task.status, task.completed);
@@ -132,6 +248,9 @@ pub fn apply(task: &Task) -> Result<Document> {
     }
     if task.alarms != original.alarms {
         set_alarms(todo, &task.alarms, &task.summary);
+    }
+    if let (Some(tz), Some(Due::DateTime(at))) = (zone_used, task.due) {
+        ensure_vtimezone(&mut doc.root, tz, at.with_timezone(&tz).year());
     }
     Ok(doc)
 }
@@ -166,9 +285,15 @@ pub fn bump(doc: &mut Document, now: DateTime<Utc>) -> Result<()> {
     Ok(())
 }
 
-/// A complete file for a new task. Timed due dates are written in UTC so no
-/// VTIMEZONE has to be generated; both phones display them in local time.
+/// A complete file for a new task. Timed due dates are written in the local
+/// zone with a VTIMEZONE, the form Apple Reminders shows as plain local
+/// time; a UTC value it shows with a GMT label.
 pub fn new_document(new: &NewTask, uid: &str, now: DateTime<Utc>) -> Document {
+    new_document_in(new, uid, now, local_zone())
+}
+
+/// `new_document` with the zone for timed values given explicitly.
+pub fn new_document_in(new: &NewTask, uid: &str, now: DateTime<Utc>, zone: Option<Tz>) -> Document {
     let stamp = now.format(UTC_DATE_TIME).to_string();
     let mut todo = Component::new("VTODO");
     todo.set(Property::new("UID", uid));
@@ -182,7 +307,7 @@ pub fn new_document(new: &NewTask, uid: &str, now: DateTime<Utc>) -> Document {
         todo.set(Property::text_value("DESCRIPTION", text));
     }
     if let Some(due) = new.due {
-        todo.set(due_property("DUE", due, None));
+        todo.set(due_property("DUE", due, None, zone));
     }
     if new.priority != Priority::None {
         todo.set(Property::new(
@@ -200,6 +325,9 @@ pub fn new_document(new: &NewTask, uid: &str, now: DateTime<Utc>) -> Document {
     let mut root = Component::new("VCALENDAR");
     root.set(Property::new("VERSION", "2.0"));
     root.set(Property::new("PRODID", prodid()));
+    if let (Some(tz), Some(Due::DateTime(at))) = (zone, new.due) {
+        root.push_child(vtimezone(tz, at.with_timezone(&tz).year()));
+    }
     root.push_child(todo);
     Document::new(root)
 }
@@ -273,7 +401,7 @@ fn set_alarms(todo: &mut Component, alarms: &[Alarm], summary: &str) {
     }
 }
 
-fn set_due(todo: &mut Component, due: Option<Due>) {
+fn set_due(todo: &mut Component, due: Option<Due>, zone: Option<Tz>) -> Option<Tz> {
     let existing = todo.prop("DUE").cloned();
     let start = todo.prop("DTSTART").cloned();
     // Apple writes DTSTART equal to DUE, so it follows DUE. A separate start
@@ -288,9 +416,10 @@ fn set_due(todo: &mut Component, due: Option<Due>) {
             if start_follows {
                 todo.remove("DTSTART");
             }
+            None
         }
         Some(due) => {
-            let prop = due_property("DUE", due, existing.as_ref());
+            let prop = due_property("DUE", due, existing.as_ref(), zone);
             let start_after_due = start
                 .as_ref()
                 .and_then(parse_due)
@@ -300,7 +429,9 @@ fn set_due(todo: &mut Component, due: Option<Due>) {
                 moved.name = "DTSTART".to_string();
                 todo.set(moved);
             }
+            let written_zone = prop.param("TZID").and_then(|name| Tz::from_str(name).ok());
             todo.set(prop);
+            written_zone
         }
     }
 }
@@ -324,10 +455,11 @@ fn set_status(todo: &mut Component, status: Status, completed: Option<DateTime<U
     }
 }
 
-/// A DUE or DTSTART property in the form the file already uses for it:
-/// a TZID with wall-clock time, floating local time, or UTC. New timed
-/// values default to UTC. Parameters other than VALUE and TZID are kept.
-fn due_property(name: &str, due: Due, existing: Option<&Property>) -> Property {
+/// A DUE or DTSTART property in the form the file already uses for it: a
+/// TZID with wall-clock time, or floating local time. A new timed value,
+/// or one the file had in UTC, is written in `zone` (UTC when there is
+/// none). Parameters other than VALUE and TZID are kept.
+fn due_property(name: &str, due: Due, existing: Option<&Property>, zone: Option<Tz>) -> Property {
     let mut params: Vec<Param> = existing
         .map(|p| {
             p.params
@@ -372,7 +504,19 @@ fn due_property(name: &str, due: Due, existing: Option<&Property>) -> Property {
                     .naive_local()
                     .format(DATE_TIME)
                     .to_string(),
-                None => utc.format(UTC_DATE_TIME).to_string(),
+                None => match zone {
+                    Some(tz) => {
+                        params.push(Param {
+                            name: "TZID".to_string(),
+                            value: tz.name().to_string(),
+                        });
+                        utc.with_timezone(&tz)
+                            .naive_local()
+                            .format(DATE_TIME)
+                            .to_string()
+                    }
+                    None => utc.format(UTC_DATE_TIME).to_string(),
+                },
             }
         }
     };

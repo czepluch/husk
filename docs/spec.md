@@ -71,7 +71,7 @@ Properties husk reads and writes:
 | `UID` | uuid v4, set on create, never changed |
 | `SUMMARY` | title |
 | `DESCRIPTION` | notes, multi-line |
-| `DUE` | `DATE` for all-day. Timed values are read as `DATE-TIME` with `TZID`, as UTC (`Z`), or floating (treated as local). New timed values written by husk are UTC, so husk never has to generate a `VTIMEZONE`; edits keep the form the file already uses (Apple writes `TZID` plus a `VTIMEZONE` component, preserved like any other component). A `TZID` chrono-tz does not know is read as local time and, once edited, written as UTC with the `TZID` dropped |
+| `DUE` | `DATE` for all-day. Timed values are read as `DATE-TIME` with `TZID`, as UTC (`Z`), or floating (treated as local). New timed values are written in the local zone (`TZ`, else the system zone) as `TZID` plus a generated `VTIMEZONE` for that year, the form Apple Reminders shows as plain local time; a UTC value it keeps in GMT. A due the file holds in UTC is rewritten the same way when edited; `TZID` and floating forms are kept, and Apple's own `VTIMEZONE` is preserved like any other component. A `TZID` chrono-tz does not know is read as local time and, once edited, written as UTC with the `TZID` dropped |
 | `DTSTART` | Not modelled. Apple writes it equal to `DUE` on every dated task; Tasks.org writes it as a separate start date. When `DUE` changes: if `DTSTART` equals the old `DUE`, move it too; otherwise leave it unless it would end up after the new `DUE`, in which case clamp it to `DUE`. Never add it |
 | `STATUS` | `NEEDS-ACTION`, `IN-PROCESS`, `COMPLETED`, `CANCELLED`. Tasks.org omits it on new tasks; missing means `NEEDS-ACTION` |
 | `COMPLETED` | UTC timestamp, set together with `STATUS:COMPLETED` and `PERCENT-COMPLETE:100` (Apple writes all three) |
@@ -172,7 +172,7 @@ husk runs `vdirsyncer sync` (configurable command; empty disables) in a backgrou
 `husk notify` is a stateless-ish subcommand run by a systemd user timer every minute:
 
 1. Load all pending tasks.
-2. For each task compute fire times: every `VALARM` (absolute, or relative to `DUE` for `RELATED=END`, to `DTSTART` for `RELATED=START`; an all-day date counts from 09:00 local; `REPEAT` is ignored so each alarm fires once), plus configurable deadline lead times for tasks with a timed `DUE` and no alarm (default `["1d", "1h", "0m"]`). All-day tasks without alarms stay silent, like on the phones.
+2. For each task compute fire times: every `VALARM` (absolute, or relative to `DUE` for `RELATED=END`, to `DTSTART` for `RELATED=START`; an all-day date counts from 09:00 local; `REPEAT` is ignored so each alarm fires once), plus the configurable lead times for tasks with a timed `DUE` and no alarm (default `["0m"]`). All-day tasks without alarms stay silent, like on the phones.
 3. Fire any time in `(since, now]` that is not in the fired set, where `since` is the last run or fifteen minutes ago, whichever is earlier, so a reminder set on the phone a few minutes ahead still fires once after the sync timer delivers it. Delivery goes via `notify-rust` (D-Bus, works with mako and dunst under Hyprland); a lead before the due time is normal urgency, at or after it critical. The very first run has no last run, so only the grace window applies. Overdue tasks get one notification at the moment they become overdue, then nothing until re-run with `--nag`, which notifies about every overdue pending task again without remembering it. `--dry-run` prints what would fire and changes nothing; `--state` overrides the state file.
 4. Persist fired keys `(uid, fire_time)` and `last_run` to `~/.local/state/husk/notify.json` (JSON via `serde_json`, written through a temp file with fsync, under a lock so two runs cannot race). Prune entries older than 30 days. A notification whose delivery fails is not marked fired and `last_run` does not advance, so the next run retries it. A state file that does not parse is moved aside and treated as empty. Leads and offsets are exact durations, so across a DST change a `1d` lead lands an hour off the wall clock.
 
@@ -180,7 +180,7 @@ Install: `cargo install --path .`, copy `contrib/husk-notify.service` and `contr
 
 Idempotent by construction: running it twice in a row fires nothing the second time; missing a few runs (laptop asleep) fires everything that came due since `last_run` once, on wake.
 
-Writing alarms: when the TUI creates a task with a timed due date, or sets a timed due date on a task that has no alarms, it adds one `VALARM` per lead time in `default_alarm_leads` (`0m` is the alarm at due), each with `TRIGGER;RELATED=END` so the trigger counts from `DUE` (RFC 5545 defaults to `START`, and husk never writes a `DTSTART`). Existing alarms are never replaced; clearing a due date drops relative alarms and keeps absolute ones. Whether iOS fires a `RELATED=END` trigger on a husk-created task is verified on the phone, not assumed. This is what makes a task created in the terminal notify on the phone. Apple Reminders fires from the alarm, not the due date, so this is not optional if phone notifications matter. Tasks.org honors the same alarm.
+Writing alarms: when the TUI creates a task with a timed due date, or sets a timed due date on a task that has no alarms, it adds one `VALARM` per lead time in `default_alarm_leads`, by default just `0m`, the alarm at due, because Apple Reminders shows the first `VALARM` as the reminder's time and cannot represent more than one; each with `TRIGGER;RELATED=END` so the trigger counts from `DUE` (RFC 5545 defaults to `START`, and husk never writes a `DTSTART`). Existing alarms are never replaced; clearing a due date drops relative alarms and keeps absolute ones. Whether iOS fires a `RELATED=END` trigger on a husk-created task is verified on the phone, not assumed. This is what makes a task created in the terminal notify on the phone. Apple Reminders fires from the alarm, not the due date, so this is not optional if phone notifications matter. Tasks.org honors the same alarm.
 
 ## 7. TUI
 
@@ -313,7 +313,7 @@ src/
     views.rs        project pane, task list, detail, prompts, popups
 ```
 
-Dependencies: `ratatui`, `crossterm`, `clap`, `serde` + `toml`, `chrono` + `chrono-tz`, `uuid`, `notify-rust` (desktop notifications), `notify` (file watching for theme hot reload), `anyhow`, `directories`, `unicode-width` (display widths for wrapping and column layout), `serde_json` (the notifier state file and `husk list --json`). For RRULE display, `recur.rs` parses the handful of parts worth describing (FREQ, INTERVAL, BYDAY with ordinals, BYMONTHDAY, BYMONTH, UNTIL, COUNT) into "weekly", "every 2nd Tuesday" and so on, shows anything else as written, and never expands occurrences; the `rrule` crate is not needed for that. For Base16 scheme files (M5), `serde_yaml` is archived upstream; a scheme file is a flat `palette:` map, so either a maintained YAML crate or a few dozen lines of hand parsing, decided when M5 starts. Write the iCalendar codec yourself; the existing crates either do not preserve unknown properties or do not round-trip, and the format is small enough that a few hundred lines with fixtures is less risk than a dependency you have to fight.
+Dependencies: `ratatui`, `crossterm`, `clap`, `serde` + `toml`, `chrono` + `chrono-tz`, `uuid`, `notify-rust` (desktop notifications), `notify` (file watching for theme hot reload), `anyhow`, `directories`, `unicode-width` (display widths for wrapping and column layout), `serde_json` (the notifier state file and `husk list --json`), `iana-time-zone` (the system zone's name for `TZID`; chrono already depends on it). For RRULE display, `recur.rs` parses the handful of parts worth describing (FREQ, INTERVAL, BYDAY with ordinals, BYMONTHDAY, BYMONTH, UNTIL, COUNT) into "weekly", "every 2nd Tuesday" and so on, shows anything else as written, and never expands occurrences; the `rrule` crate is not needed for that. For Base16 scheme files (M5), `serde_yaml` is archived upstream; a scheme file is a flat `palette:` map, so either a maintained YAML crate or a few dozen lines of hand parsing, decided when M5 starts. Write the iCalendar codec yourself; the existing crates either do not preserve unknown properties or do not round-trip, and the format is small enough that a few hundred lines with fixtures is less risk than a dependency you have to fight.
 
 Config:
 
@@ -323,7 +323,7 @@ default_project = "personal"
 sync_command = ["vdirsyncer", "sync"]
 date_format = "%Y-%m-%d"
 time_format = "%H:%M"
-default_alarm_leads = ["1d", "1h", "0m"]
+default_alarm_leads = ["0m"]
 theme = "phosphor"      # a built-in flavor (phosphor, ansi) or the path of a Base16/Base24 scheme file
 ```
 
@@ -356,6 +356,7 @@ Later, optional: `CaldavStore` implementing `Store` over HTTPS with `reqwest` (P
 - Apple keeps properties sorted alphabetically and inserts new ones in order (`COMPLETED` lands before `CREATED`). Order is preserved, never imposed.
 - Radicale stores completed tasks forever. Show them under `Completed` and add `husk purge --older-than 90d` later if the vdir gets big.
 - A floating `DUE` (no `TZID`, no `Z`) is legal and shows up from some clients. Treat as local time.
+- Apple Reminders shows the first `VALARM` as the reminder's date and time, and a `DUE` written in UTC as a time in GMT. Write one alarm at due, and timed values with the local `TZID`.
 - vdirsyncer refuses to run if two files claim the same UID. The store must never create that state; move is write-new-then-delete-old, never copy-then-forget.
 - DST: compute all fire times in UTC from the zoned due time; never do arithmetic on naive local times.
 - Do not implement RRULE expansion in v1. The phone does it, and it is the single largest source of bugs in this class of software.
