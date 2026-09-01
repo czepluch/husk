@@ -464,17 +464,20 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let line = match app.mode {
         Mode::Filter => Line::from(vec![
             Span::styled(" /", theme.help_key),
-            Span::raw(app.filter.clone()),
+            Span::styled(app.filter.clone(), theme.base),
             Span::styled("▌", theme.accent),
         ]),
         Mode::Input => prompt_line(app, theme),
         Mode::Confirm => Line::from(vec![
-            Span::raw(format!(
-                " Delete \"{}\"? ",
-                app.confirm
-                    .as_ref()
-                    .map_or("", |(_, summary)| summary.as_str())
-            )),
+            Span::styled(
+                format!(
+                    " Delete \"{}\"? ",
+                    app.confirm
+                        .as_ref()
+                        .map_or("", |(_, summary)| summary.as_str())
+                ),
+                theme.base,
+            ),
             Span::styled("y", theme.help_key),
             Span::raw("/"),
             Span::styled("n", theme.help_key),
@@ -569,7 +572,7 @@ fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
     let placeholder = if input.buffer.is_empty() { hint } else { "" };
     Line::from(vec![
         Span::styled(format!(" {prompt}> "), theme.help_key),
-        Span::raw(input.buffer.clone()),
+        Span::styled(input.buffer.clone(), theme.base),
         Span::styled("▌", theme.accent),
         Span::styled(placeholder.to_string(), theme.muted),
     ])

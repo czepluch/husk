@@ -976,3 +976,72 @@ fn messages_set_from_outside_a_key_press_still_fade_correctly() {
     s.app.poll();
     assert_eq!(s.app.message, None);
 }
+
+#[test]
+fn typed_text_in_prompts_uses_the_normal_foreground_not_the_muted_bar_color() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let mut s = sample();
+    s.app.view_index = 5;
+    s.app.handle_key(key('a'));
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    terminal.draw(|f| views::draw(f, &s.app, &theme)).unwrap();
+    let placeholder_cell = |t: &Terminal<TestBackend>| {
+        let text = screen(t);
+        let (y, line) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("title due:tomorrow"))
+            .unwrap();
+        let x = line[..line.find("title due").unwrap()].chars().count();
+        t.backend()
+            .buffer()
+            .cell((x as u16, y as u16))
+            .unwrap()
+            .style()
+    };
+    assert_eq!(
+        placeholder_cell(&terminal).fg,
+        theme.muted.fg,
+        "placeholder is muted"
+    );
+
+    type_text(&mut s.app, "Buy milk");
+    terminal.draw(|f| views::draw(f, &s.app, &theme)).unwrap();
+    let text = screen(&terminal);
+    let (y, line) = text
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("Buy milk"))
+        .unwrap();
+    let x = line[..line.find("Buy milk").unwrap()].chars().count();
+    let typed = terminal
+        .backend()
+        .buffer()
+        .cell((x as u16, y as u16))
+        .unwrap()
+        .style();
+    assert_eq!(
+        typed.fg, theme.base.fg,
+        "typed text is the normal foreground"
+    );
+    assert_ne!(typed.fg, theme.muted.fg);
+
+    s.app.handle_key(code(KeyCode::Esc));
+    s.app.handle_key(key('/'));
+    type_text(&mut s.app, "milk");
+    terminal.draw(|f| views::draw(f, &s.app, &theme)).unwrap();
+    let text = screen(&terminal);
+    let (y, line) = text
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.starts_with(" /milk"))
+        .unwrap();
+    let x = line.find("milk").unwrap();
+    let typed = terminal
+        .backend()
+        .buffer()
+        .cell((x as u16, y as u16))
+        .unwrap()
+        .style();
+    assert_eq!(typed.fg, theme.base.fg, "filter text too");
+}
