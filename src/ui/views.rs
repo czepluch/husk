@@ -8,8 +8,10 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use std::collections::HashMap;
+
 use super::app::{
-    App, Bucket, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text, bucket, due_detail,
+    App, Bucket, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text, bucket, depth, due_detail,
     due_label, stamp,
 };
 use crate::model::{Priority, Status, Task};
@@ -150,9 +152,13 @@ fn draw_tasks(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         .max()
         .unwrap_or(5)
         .clamp(5, 20);
+    let listed: HashMap<&str, &Task> = tasks.iter().map(|t| (t.uid.as_str(), *t)).collect();
     let items: Vec<ListItem> = tasks
         .iter()
-        .map(|task| ListItem::new(task_item(task, app, theme, area.width, label_width)))
+        .map(|task| {
+            let depth = depth(task, &listed);
+            ListItem::new(task_item(task, app, theme, area.width, label_width, depth))
+        })
         .collect();
     let list = List::new(items)
         .block(block)
@@ -197,6 +203,7 @@ fn task_item<'a>(
     theme: &Theme,
     pane_width: u16,
     label_width: usize,
+    depth: usize,
 ) -> Text<'a> {
     let done = task.is_done();
     let dim = |style: Style| if done { theme.done } else { style };
@@ -218,11 +225,18 @@ fn task_item<'a>(
     let prefix_width = label_width + 8;
 
     let text = dim(priority_style(task.priority, theme));
-    let mut words: Vec<Span<'a>> = task
-        .summary
-        .split_whitespace()
-        .map(|word| Span::styled(word, text))
-        .collect();
+    let mut words: Vec<Span<'a>> = Vec::new();
+    if depth > 0 {
+        words.push(Span::styled(
+            format!("{}{}", "  ".repeat(depth - 1), theme.symbols.subtask),
+            dim(theme.muted),
+        ));
+    }
+    words.extend(
+        task.summary
+            .split_whitespace()
+            .map(|word| Span::styled(word, text)),
+    );
     words.extend(
         task.tags
             .iter()

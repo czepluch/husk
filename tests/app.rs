@@ -856,3 +856,83 @@ fn recurring_tasks_show_the_rule_in_words() {
     let text = screen(&terminal);
     assert!(text.contains("Repeats   ↻ weekly  FREQ=WEEKLY"), "{text}");
 }
+
+#[test]
+fn subtasks_follow_their_parent_and_are_indented() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let tasks = vec![
+        task("child", "Small step", "p", None, "RELATED-TO:parent\r\n"),
+        task(
+            "other",
+            "Other thing",
+            "p",
+            Some("DUE;VALUE=DATE:20260902"),
+            "",
+        ),
+        task(
+            "parent",
+            "Big thing",
+            "p",
+            Some("DUE;VALUE=DATE:20260901"),
+            "",
+        ),
+        task(
+            "grandchild",
+            "Tiny step",
+            "p",
+            None,
+            "RELATED-TO;RELTYPE=PARENT:child\r\n",
+        ),
+        task("orphan", "Lost step", "p", None, "RELATED-TO:nobody\r\n"),
+        task("loop-a", "Loop A", "p", None, "RELATED-TO:loop-b\r\n"),
+        task("loop-b", "Loop B", "p", None, "RELATED-TO:loop-a\r\n"),
+    ];
+    let mut s = make(&[], tasks);
+    let app = &mut s.app;
+    app.view_index = 3;
+    assert_eq!(
+        uids(app),
+        vec![
+            "parent",
+            "child",
+            "grandchild",
+            "other",
+            "orphan",
+            "loop-a",
+            "loop-b"
+        ],
+        "children follow parents, a cycle falls to the end"
+    );
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 14)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
+    let text = screen(&terminal);
+    let col = |needle: &str| {
+        let line = text.lines().find(|l| l.contains(needle)).unwrap();
+        line.find(needle).unwrap()
+    };
+    assert!(text.contains("└ Small step"), "{text}");
+    assert!(text.contains("  └ Tiny step"), "{text}");
+    assert_eq!(
+        col("└ Small step"),
+        col("Big thing"),
+        "child under the parent's title column"
+    );
+    assert!(
+        !text.contains("└ Lost step"),
+        "an orphan renders as a plain row:\n{text}"
+    );
+
+    app.filter = "step".to_string();
+    assert_eq!(
+        uids(app),
+        vec!["child", "grandchild", "orphan"],
+        "a filtered-out parent leaves its children at sort order"
+    );
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(
+        text.contains("└ Tiny step") && !text.contains("└ Small step"),
+        "{text}"
+    );
+}

@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::model::{Due, NewTask, Priority, Project, ProjectId, Task, find_project, project_name};
 use crate::quickadd;
 use crate::store::Store;
-use crate::ui::app::{Bucket, View, bucket, due_label, in_view, sort_key};
+use crate::ui::app::{Bucket, View, bucket, due_label, in_view, nest, sort_key};
 
 /// One task as `husk list` reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -27,6 +27,8 @@ pub struct Row {
     pub priority: &'static str,
     pub tags: Vec<String>,
     pub recurring: bool,
+    /// UID of the parent task, when it has one.
+    pub parent: Option<String>,
 }
 
 /// The tasks of a view, optionally one project, in the TUI's order.
@@ -44,7 +46,7 @@ pub fn rows(
         .filter(|t| project.is_none_or(|p| &t.project == p))
         .collect();
     picked.sort_by_cached_key(|t| sort_key(t, now));
-    picked
+    nest(picked)
         .into_iter()
         .map(|task| Row {
             uid: task.uid.clone(),
@@ -65,6 +67,7 @@ pub fn rows(
             },
             tags: task.tags.clone(),
             recurring: task.is_recurring(),
+            parent: task.parent.clone(),
         })
         .collect()
 }

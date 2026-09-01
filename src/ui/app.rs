@@ -4,6 +4,8 @@
 //! followed by a reload, and asks the syncer to run. Rendering lives in
 //! `views.rs`.
 
+use std::collections::{HashMap, HashSet};
+
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Local, NaiveTime, TimeDelta, TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -210,7 +212,9 @@ impl App {
             .count()
     }
 
-    /// The tasks of the current view that match the filter, in display order.
+    /// The tasks of the current view that match the filter, in display
+    /// order: sorted, then each subtask placed right after its parent when
+    /// the parent is in the list too.
     pub fn visible_tasks(&self) -> Vec<&Task> {
         let view = self.view();
         let mut tasks: Vec<&Task> = self
@@ -220,7 +224,7 @@ impl App {
             .filter(|t| self.matches_filter(t))
             .collect();
         tasks.sort_by_cached_key(|t| sort_key(t, self.now));
-        tasks
+        nest(tasks)
     }
 
     /// The position of the selected task in the visible list.
@@ -855,6 +859,67 @@ impl App {
         };
         self.select(index, uid);
     }
+}
+
+/// Places subtasks right after their parents. A task whose parent is not
+/// in the list stays where the sort put it; a parent chain that never
+/// reaches a root (a cycle) falls back to sort order.
+pub fn nest(sorted: Vec<&Task>) -> Vec<&Task> {
+    let uids: HashSet<&str> = sorted.iter().map(|t| t.uid.as_str()).collect();
+    let mut children: HashMap<&str, Vec<&Task>> = HashMap::new();
+    let mut roots = Vec::new();
+    for task in &sorted {
+        match task
+            .parent
+            .as_deref()
+            .filter(|p| uids.contains(p) && *p != task.uid)
+        {
+            Some(parent) => children.entry(parent).or_default().push(task),
+            None => roots.push(*task),
+        }
+    }
+    let mut out = Vec::with_capacity(sorted.len());
+    let mut seen = HashSet::new();
+    for root in roots {
+        push_tree(root, &children, &mut out, &mut seen);
+    }
+    for task in sorted {
+        if !seen.contains(task.uid.as_str()) {
+            out.push(task);
+        }
+    }
+    out
+}
+
+fn push_tree<'a>(
+    task: &'a Task,
+    children: &HashMap<&str, Vec<&'a Task>>,
+    out: &mut Vec<&'a Task>,
+    seen: &mut HashSet<&'a str>,
+) {
+    if !seen.insert(task.uid.as_str()) {
+        return;
+    }
+    out.push(task);
+    if let Some(kids) = children.get(task.uid.as_str()) {
+        for kid in kids {
+            push_tree(kid, children, out, seen);
+        }
+    }
+}
+
+/// How many of a task's ancestors are in the list; 0 for a top-level row.
+pub fn depth(task: &Task, listed: &HashMap<&str, &Task>) -> usize {
+    let mut depth = 0;
+    let mut current = task;
+    while let Some(parent) = current.parent.as_deref().and_then(|p| listed.get(p)) {
+        depth += 1;
+        current = parent;
+        if depth > 8 {
+            break;
+        }
+    }
+    depth
 }
 
 fn plain(key: KeyEvent) -> bool {
