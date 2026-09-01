@@ -172,9 +172,11 @@ husk runs `vdirsyncer sync` (configurable command; empty disables) in a backgrou
 `husk notify` is a stateless-ish subcommand run by a systemd user timer every minute:
 
 1. Load all pending tasks.
-2. For each task compute fire times: every `VALARM` (absolute, or `DUE` plus relative trigger), plus configurable deadline lead times for tasks with a timed `DUE` and no alarm (default `["1d", "1h", "0m"]`).
-3. Fire any time in `[last_run, now]` that is not in the fired set, via `notify-rust` (D-Bus, works with mako and dunst under Hyprland). Overdue tasks get one notification at the moment they become overdue, then nothing until re-run with `--nag`.
-4. Persist fired keys `(uid, fire_time)` and `last_run` to `~/.local/state/husk/notify.json`. Prune entries older than 30 days.
+2. For each task compute fire times: every `VALARM` (absolute, or relative to `DUE` for `RELATED=END`, to `DTSTART` for `RELATED=START`; an all-day date counts from 09:00 local; `REPEAT` is ignored so each alarm fires once), plus configurable deadline lead times for tasks with a timed `DUE` and no alarm (default `["1d", "1h", "0m"]`). All-day tasks without alarms stay silent, like on the phones.
+3. Fire any time in `(last_run, now]` that is not in the fired set, via `notify-rust` (D-Bus, works with mako and dunst under Hyprland); a lead before the due time is normal urgency, at or after it critical. The very first run records the time and fires nothing. Overdue tasks get one notification at the moment they become overdue, then nothing until re-run with `--nag`, which notifies about every overdue pending task again without remembering it. `--dry-run` prints what would fire and changes nothing; `--state` overrides the state file.
+4. Persist fired keys `(uid, fire_time)` and `last_run` to `~/.local/state/husk/notify.json` (JSON via `serde_json`). Prune entries older than 30 days. A notification whose delivery fails is not marked fired, so the next run retries it.
+
+Install: `cargo install --path .`, copy `contrib/husk-notify.service` and `contrib/husk-notify.timer` to `~/.config/systemd/user/`, then `systemctl --user enable --now husk-notify.timer`.
 
 Idempotent by construction: running it twice in a row fires nothing the second time; missing a few runs (laptop asleep) fires everything that came due since `last_run` once, on wake.
 
@@ -290,7 +292,8 @@ Single crate: a library target holding the modules below and a thin binary on to
 ```
 src/
   lib.rs          module declarations only
-  main.rs         clap: tui (default) | add | list | notify | sync
+  main.rs         clap: tui (default) | add | list | notify | sync; --config picks a config file
+  cli.rs          husk add and husk list, same rules as the TUI
   config.rs       ~/.config/husk/config.toml via serde + toml
   model.rs        Task, Project, Due, Alarm, Priority, Status
   ical/
@@ -310,7 +313,7 @@ src/
     views.rs        project pane, task list, detail, prompts, popups
 ```
 
-Dependencies: `ratatui`, `crossterm`, `clap`, `serde` + `toml`, `chrono` + `chrono-tz`, `uuid`, `notify-rust` (desktop notifications), `notify` (file watching for theme hot reload), `anyhow`, `directories`, `unicode-width` (display widths for wrapping and column layout). For RRULE display, `rrule` for parsing and validation only; it has no human-readable describer, so the "weekly" / "every 2nd Tuesday" text is a small function of ours, and occurrences are never expanded in v1. For Base16 scheme files (M5), `serde_yaml` is archived upstream; a scheme file is a flat `palette:` map, so either a maintained YAML crate or a few dozen lines of hand parsing, decided when M5 starts. Write the iCalendar codec yourself; the existing crates either do not preserve unknown properties or do not round-trip, and the format is small enough that a few hundred lines with fixtures is less risk than a dependency you have to fight.
+Dependencies: `ratatui`, `crossterm`, `clap`, `serde` + `toml`, `chrono` + `chrono-tz`, `uuid`, `notify-rust` (desktop notifications), `notify` (file watching for theme hot reload), `anyhow`, `directories`, `unicode-width` (display widths for wrapping and column layout), `serde_json` (the notifier state file and `husk list --json`). For RRULE display, `rrule` for parsing and validation only; it has no human-readable describer, so the "weekly" / "every 2nd Tuesday" text is a small function of ours, and occurrences are never expanded in v1. For Base16 scheme files (M5), `serde_yaml` is archived upstream; a scheme file is a flat `palette:` map, so either a maintained YAML crate or a few dozen lines of hand parsing, decided when M5 starts. Write the iCalendar codec yourself; the existing crates either do not preserve unknown properties or do not round-trip, and the format is small enough that a few hundred lines with fixtures is less risk than a dependency you have to fight.
 
 Config:
 
@@ -336,7 +339,7 @@ M2, weekend 2: read-only TUI. Projects pane, task list, Today and Upcoming views
 
 M3, weekend 3: mutations. Quick add and its tests, done, delete with undo, edit due, priority, tags, notes via `$EDITOR`, move. Sync trigger after writes. Alarm written on create. From here on you can live on it.
 
-M4, one evening: `husk notify`, state file, systemd timer, `husk list --json` for Waybar, `husk add` for the Hyprland capture keybind.
+M4, one evening: `husk notify`, state file, systemd timer (units in `contrib/`), `husk list --json` for Waybar, `husk add` for the Hyprland capture keybind (it waits for the sync command before exiting).
 
 M5, as needed: RRULE description, subtask rendering, colors from the vdir `color` file, `husk sync --discover`.
 
