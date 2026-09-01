@@ -1031,3 +1031,23 @@ fn a_failed_theme_reload_keeps_the_theme_and_says_why() {
     assert_ne!(theme, phosphor);
     assert_eq!(app.message.as_deref(), Some("Theme reloaded"));
 }
+
+#[test]
+fn only_events_that_can_change_a_file_reload_the_theme() {
+    use notify::event::{AccessKind, AccessMode, CreateKind, EventKind, ModifyKind, RemoveKind};
+    for kind in [
+        EventKind::Access(AccessKind::Read),
+        EventKind::Access(AccessKind::Open(AccessMode::Any)),
+        EventKind::Access(AccessKind::Close(AccessMode::Read)),
+    ] {
+        assert!(!ui::changes_a_file(&notify::Event::new(kind)), "{kind:?}");
+    }
+    for kind in [
+        EventKind::Create(CreateKind::File),
+        EventKind::Modify(ModifyKind::Any),
+        EventKind::Remove(RemoveKind::File),
+        EventKind::Any,
+    ] {
+        assert!(ui::changes_a_file(&notify::Event::new(kind)), "{kind:?}");
+    }
+}

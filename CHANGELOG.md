@@ -3,6 +3,12 @@
 Notable changes per release. Versions follow semver; the format follows
 Keep a Changelog.
 
+## Unreleased
+
+- The theme hot reload no longer fires when something merely reads the
+  config directory, which the notify timer and a Waybar interval do
+  constantly; only an event that can change a file reloads the theme.
+
 ## 0.1.0 - 2026-09-01
 
 First usable version.

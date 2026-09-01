@@ -24,8 +24,12 @@ use app::App;
 pub fn run(mut app: App, reload: impl Fn() -> Result<Theme>, watch: Option<&Path>) -> Result<()> {
     let theme = reload()?;
     let (tx, changes) = mpsc::channel();
-    let mut watcher = notify::recommended_watcher(move |_: notify::Result<notify::Event>| {
-        let _ = tx.send(());
+    let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+        if let Ok(event) = result
+            && changes_a_file(&event)
+        {
+            let _ = tx.send(());
+        }
     })
     .ok();
     if let (Some(watcher), Some(dir)) = (watcher.as_mut(), watch.filter(|d| d.is_dir())) {
@@ -78,6 +82,14 @@ fn event_loop(
         app.poll();
     }
     Ok(())
+}
+
+/// Whether a watcher event can have changed a file. Reads raise events
+/// too, and things read the config directory all the time (the notify
+/// timer, a Waybar interval), so reloading on every event would flash
+/// "Theme reloaded" over and over.
+pub fn changes_a_file(event: &notify::Event) -> bool {
+    !matches!(event.kind, notify::EventKind::Access(_))
 }
 
 /// A freshly read theme replaces the current one; a theme that failed to
