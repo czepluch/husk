@@ -363,3 +363,4 @@ Later, optional: `CaldavStore` implementing `Store` over HTTPS with `reqwest` (P
 - Since Radicale is now running, point khal and Apple Calendar at it too; `Upcoming` could show today's events read-only for context, later.
 - Tag-based views (`#health` across all projects) fall out of the filter for free.
 - An Urgent smart view: high priority or due within a day, across projects.
+- A popup for adding tasks instead of the one-line prompt at the bottom: room for the title, notes, due, priority, tags and project at once, with the quick-add grammar still accepted in the title line.
