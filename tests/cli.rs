@@ -283,3 +283,73 @@ fn sync_discover_runs_discover_metasync_then_sync() {
         "nothing runs after a failed discover"
     );
 }
+
+#[test]
+fn theme_dump_and_check_work_with_flavors_and_scheme_files() {
+    let s = setup("\"true\"");
+    let (ok, out, err) = husk(&s, &["theme", "dump"]);
+    assert!(ok, "{err}");
+    assert!(
+        out.contains("[colors]") && out.contains("accent = \"#39ff14\""),
+        "{out}"
+    );
+
+    let good = s.dir.path().join("good.toml");
+    fs::write(
+        &good,
+        "[colors]\naccent = \"red\"\n[borders]\nstyle = \"rounded\"\n",
+    )
+    .unwrap();
+    let (ok, out, err) = husk(&s, &["theme", "check", good.to_str().unwrap()]);
+    assert!(ok, "{err}");
+    assert!(out.contains("ok on top of phosphor"), "{out}");
+
+    let bad = s.dir.path().join("bad.toml");
+    fs::write(&bad, "[colors]\naccent = \"chartreuse\"\n").unwrap();
+    let (ok, _, err) = husk(&s, &["theme", "check", bad.to_str().unwrap()]);
+    assert!(!ok);
+    assert!(err.contains("chartreuse"), "{err}");
+
+    let typo = s.dir.path().join("typo.toml");
+    fs::write(&typo, "[colours]\naccent = \"red\"\n").unwrap();
+    let (ok, _, err) = husk(&s, &["theme", "check", typo.to_str().unwrap()]);
+    assert!(!ok);
+    assert!(err.contains("colours"), "{err}");
+
+    let scheme = s.dir.path().join("scheme.yaml");
+    let mut yaml = String::from("system: \"base16\"\nname: \"Test\"\npalette:\n");
+    for (i, hex) in [
+        "1d2021", "3c3836", "504945", "665c54", "bdae93", "d5c4a1", "ebdbb2", "fbf1c7", "fb4934",
+        "fe8019", "fabd2f", "b8bb26", "8ec07c", "83a598", "d3869b", "d65d0e",
+    ]
+    .iter()
+    .enumerate()
+    {
+        yaml.push_str(&format!("  base{i:02X}: \"#{hex}\"\n"));
+    }
+    fs::write(&scheme, yaml).unwrap();
+    let config = s.dir.path().join("scheme-config.toml");
+    fs::write(
+        &config,
+        format!(
+            "vdir = \"{}\"\ntheme = \"{}\"\n",
+            s.dir.path().display(),
+            scheme.display()
+        ),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_husk"))
+        .args(["--config", config.to_str().unwrap(), "theme", "dump"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        out.contains("overdue = \"#fb4934\""),
+        "base08 is overdue:\n{out}"
+    );
+    assert!(
+        out.contains("accent = \"#b8bb26\""),
+        "base0B is the accent:\n{out}"
+    );
+}
