@@ -278,10 +278,10 @@ Shipped built-in flavors, selectable by name, all written as ordinary `theme.tom
 Implementation notes:
 
 - `theme.rs` owns parsing, the Base16 mapping table, resolution into a `Theme` of `ratatui::style::Style` values, and nothing else. The UI code references `theme.overdue`, never a color literal. Enforce this with a clippy deny on `Color::` outside `theme.rs`.
-- Hot reload: watch `theme.toml` with the `notify` crate and re-resolve on change. Iterating on a theme without restarting is what makes people actually make themes.
+- Hot reload: the TUI watches `~/.config/husk` with the `notify` crate and re-resolves the theme on any change there (`theme.toml` and scheme files kept under it); a broken edit shows its error in the bar and keeps the previous theme. Iterating on a theme without restarting is what makes people actually make themes.
 - `husk theme dump` prints the fully resolved theme as TOML, so a user can start from the current look instead of from scratch. `husk theme check <file>` validates a file and reports unknown slots.
 - Symbols must have an ASCII fallback so the app works without a Nerd Font; `set = "ascii"` swaps the whole table.
-- Base16 mapping is the one piece of policy: `base00` bg, `base05` fg, `base03` muted, `base02` selection bg, `base08` red for overdue, `base0A` yellow for due today, `base0B` green for accent, `base0D` blue for soon and projects, `base0E` magenta for tags, `base0C` cyan for recurring. Priority is not a color: hue encodes time, weight encodes importance (bold high, normal medium, dim low), and the `!!!` marker column repeats it for terminals without weights. Document it in the README so scheme authors know what to expect.
+- Base16 mapping is the one piece of policy, kept in `src/themes/base16.toml` and in the README: `base00` bg, `base05` fg, `base03` muted, `base02` selection bg, `base08` red for overdue, `base0A` yellow for due today, `base0B` green for accent, `base0D` blue for soon and projects, `base0E` magenta for tags, `base0C` cyan for recurring. Priority is not a color: hue encodes time, weight encodes importance (bold high, normal medium, dim low), and the `!!!` marker column repeats it for terminals without weights. Document it in the README so scheme authors know what to expect.
 
 Add to M2 (read-only TUI): the theme loader with the `phosphor` and `ansi` flavors, since layout and colors are settled together. Add to M5: Base16 loading, hot reload, `husk theme dump` and `check`.
 
@@ -325,7 +325,7 @@ sync_command = ["vdirsyncer", "sync"]
 date_format = "%Y-%m-%d"
 time_format = "%H:%M"
 default_alarm_leads = ["1d", "1h", "0m"]
-theme = "phosphor"      # built-in flavor; M5 lets this be a Base16 scheme path as well
+theme = "phosphor"      # a built-in flavor (phosphor, ansi) or the path of a Base16/Base24 scheme file
 ```
 
 ## 9. Implementation plan
@@ -342,7 +342,7 @@ M3, weekend 3: mutations. Quick add and its tests, done, delete with undo, edit 
 
 M4, one evening: `husk notify`, state file, systemd timer (units in `contrib/`), `husk list --json` for Waybar, `husk add` for the Hyprland capture keybind (it runs the sync command in the foreground and exits non-zero when that fails, with the task already created).
 
-M5, as needed: RRULE description, subtask rendering, colors from the vdir `color` file, `husk sync --discover`.
+M5, as needed: RRULE description, subtask rendering, colors from the vdir `color` file, `husk sync --discover`, Base16 loading, hot reload, `husk theme dump` and `check`, `o` for the raw file. The README documents the Base16 mapping.
 
 After v1, before anything optional: move Radicale from the laptop to the DappNode as a package behind the HTTPS portal, following the steps in the M0 paragraph above (copy `collections/`, re-point the phones and vdirsyncer at the HTTPS URL, clear the vdirsyncer pair status, drop the laptop CA from the phones). Until then Radicale is started by hand on the laptop after each reboot.
 
