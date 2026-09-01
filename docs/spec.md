@@ -173,8 +173,8 @@ husk runs `vdirsyncer sync` (configurable command; empty disables) in a backgrou
 
 1. Load all pending tasks.
 2. For each task compute fire times: every `VALARM` (absolute, or relative to `DUE` for `RELATED=END`, to `DTSTART` for `RELATED=START`; an all-day date counts from 09:00 local; `REPEAT` is ignored so each alarm fires once), plus configurable deadline lead times for tasks with a timed `DUE` and no alarm (default `["1d", "1h", "0m"]`). All-day tasks without alarms stay silent, like on the phones.
-3. Fire any time in `(last_run, now]` that is not in the fired set, via `notify-rust` (D-Bus, works with mako and dunst under Hyprland); a lead before the due time is normal urgency, at or after it critical. The very first run records the time and fires nothing. Overdue tasks get one notification at the moment they become overdue, then nothing until re-run with `--nag`, which notifies about every overdue pending task again without remembering it. `--dry-run` prints what would fire and changes nothing; `--state` overrides the state file.
-4. Persist fired keys `(uid, fire_time)` and `last_run` to `~/.local/state/husk/notify.json` (JSON via `serde_json`). Prune entries older than 30 days. A notification whose delivery fails is not marked fired, so the next run retries it.
+3. Fire any time in `(since, now]` that is not in the fired set, where `since` is the last run or fifteen minutes ago, whichever is earlier, so a reminder set on the phone a few minutes ahead still fires once after the sync timer delivers it. Delivery goes via `notify-rust` (D-Bus, works with mako and dunst under Hyprland); a lead before the due time is normal urgency, at or after it critical. The very first run records the time and fires nothing. Overdue tasks get one notification at the moment they become overdue, then nothing until re-run with `--nag`, which notifies about every overdue pending task again without remembering it. `--dry-run` prints what would fire and changes nothing; `--state` overrides the state file.
+4. Persist fired keys `(uid, fire_time)` and `last_run` to `~/.local/state/husk/notify.json` (JSON via `serde_json`, written through a temp file with fsync, under a lock so two runs cannot race). Prune entries older than 30 days. A notification whose delivery fails is not marked fired and `last_run` does not advance, so the next run retries it. A state file that does not parse is moved aside and treated as empty. Leads and offsets are exact durations, so across a DST change a `1d` lead lands an hour off the wall clock.
 
 Install: `cargo install --path .`, copy `contrib/husk-notify.service` and `contrib/husk-notify.timer` to `~/.config/systemd/user/`, then `systemctl --user enable --now husk-notify.timer`.
 
@@ -339,7 +339,7 @@ M2, weekend 2: read-only TUI. Projects pane, task list, Today and Upcoming views
 
 M3, weekend 3: mutations. Quick add and its tests, done, delete with undo, edit due, priority, tags, notes via `$EDITOR`, move. Sync trigger after writes. Alarm written on create. From here on you can live on it.
 
-M4, one evening: `husk notify`, state file, systemd timer (units in `contrib/`), `husk list --json` for Waybar, `husk add` for the Hyprland capture keybind (it waits for the sync command before exiting).
+M4, one evening: `husk notify`, state file, systemd timer (units in `contrib/`), `husk list --json` for Waybar, `husk add` for the Hyprland capture keybind (it runs the sync command in the foreground and exits non-zero when that fails, with the task already created).
 
 M5, as needed: RRULE description, subtask rendering, colors from the vdir `color` file, `husk sync --discover`.
 
@@ -362,7 +362,7 @@ Later, optional: `CaldavStore` implementing `Store` over HTTPS with `reqwest` (P
 
 ## 11. Bonus ideas, cheap once the core exists
 
-- Waybar module: `husk list --view today --json | jq length` for a due-today badge; click opens the TUI in a terminal.
+- Waybar module: `husk list --json | jq length` for a badge of tasks due today or overdue (`--view overdue` for the overdue count alone); click opens the TUI in a terminal.
 - `husk add` from a Hyprland keybind with a fuzzel prompt, as above.
 - Share a list with your partner: create it in Radicale under a shared collection with `rights` allowing both users; Apple Reminders and Tasks.org both handle it, husk sees it as one more project.
 - Since Radicale is now running, point khal and Apple Calendar at it too; `Upcoming` could show today's events read-only for context, later.
