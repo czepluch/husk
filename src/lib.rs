@@ -5,6 +5,7 @@ pub mod alarms;
 pub mod config;
 pub mod ical;
 pub mod model;
+pub mod notify;
 pub mod quickadd;
 pub mod store;
 pub mod sync;
