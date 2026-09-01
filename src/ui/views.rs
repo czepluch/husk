@@ -102,7 +102,13 @@ fn draw_views(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         }
         let count = app.count(view);
         let style = match view {
-            View::Project(_) => theme.project,
+            View::Project(id) => app
+                .projects
+                .iter()
+                .find(|p| &p.id == id)
+                .and_then(|p| p.color.as_deref())
+                .and_then(|color| theme.hex_style(color))
+                .unwrap_or(theme.project),
             View::Overdue if count > 0 => theme.overdue,
             _ => Style::default(),
         };

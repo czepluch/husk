@@ -936,3 +936,32 @@ fn subtasks_follow_their_parent_and_are_indented() {
         "{text}"
     );
 }
+
+#[test]
+fn projects_wear_the_color_from_their_vdir_color_file() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let mut s = sample();
+    fs::write(s._dir.path().join("life/color"), "#83D754\n").unwrap();
+    fs::write(s._dir.path().join("argot/color"), "not a color\n").unwrap();
+    s.app.reload();
+    let app = &s.app;
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
+    let text = screen(&terminal);
+    let buffer = terminal.backend().buffer();
+    let style_of = |needle: &str| {
+        let (y, line) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains(needle))
+            .unwrap();
+        let x = line[..line.find(needle).unwrap()].chars().count();
+        buffer.cell((x as u16, y as u16)).unwrap().style()
+    };
+    assert_eq!(style_of("Life").fg, theme.hex_style("#83D754").unwrap().fg);
+    assert_eq!(
+        style_of("Argot").fg,
+        theme.project.fg,
+        "an unreadable color falls back"
+    );
+}

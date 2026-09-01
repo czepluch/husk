@@ -151,6 +151,19 @@ impl Theme {
     }
 }
 
+impl Theme {
+    /// A foreground style from `#rrggbb` (an alpha suffix is ignored), for
+    /// colors that come from data, such as the vdir `color` file, rather
+    /// than from the theme.
+    pub fn hex_style(&self, hex: &str) -> Option<Style> {
+        let digits = hex.trim().trim_start_matches('#');
+        let rgb = digits
+            .get(..6)
+            .filter(|_| digits.len() == 6 || digits.len() == 8)?;
+        parse_hex(rgb).map(|color| Style::new().fg(color))
+    }
+}
+
 /// The source of a built-in flavor.
 pub fn builtin(name: &str) -> Result<&'static str> {
     match name {
@@ -485,6 +498,21 @@ mod tests {
             "no file, no overrides"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn data_colors_come_through_hex_style() {
+        let theme = ThemeFile::parse(PHOSPHOR).unwrap().resolve().unwrap();
+        let expected = Style::new().fg(Color::Rgb(0x83, 0xd7, 0x54));
+        assert_eq!(theme.hex_style("#83D754"), Some(expected));
+        assert_eq!(theme.hex_style("83d754"), Some(expected));
+        assert_eq!(
+            theme.hex_style("#83D754FF\n"),
+            Some(expected),
+            "alpha suffix ignored"
+        );
+        assert_eq!(theme.hex_style("#83D75"), None);
+        assert_eq!(theme.hex_style("green"), None);
     }
 
     #[test]
