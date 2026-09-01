@@ -9,7 +9,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -18,3 +18,11 @@ jobs:
       - run: cargo test
       # The runner is in UTC; a second zone catches tests that assume one.
       - run: TZ=Europe/Copenhagen cargo test
+
+  # Proves the rust-version in Cargo.toml still builds the crate.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.89
+      - run: cargo check --locked --all-targets

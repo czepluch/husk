@@ -1,12 +1,12 @@
 # husk
 
 Tasks in the terminal, synced with your phone. husk is a CalDAV task (VTODO)
-client that round-trips cleanly with Apple Reminders and Tasks.org through a
-self-hosted Radicale server and vdirsyncer. One binary gives you a TUI, a
-scripting CLI for keybinds and Waybar, and a notifier for a systemd timer.
+client that round-trips cleanly with Apple Reminders and Tasks.org through
+vdirsyncer and a CalDAV server. One binary gives you a TUI, a scripting CLI
+for keybinds and Waybar, and a notifier for a systemd timer.
 
 ```
-iPhone Reminders / Tasks.org  <-- CalDAV -->  Radicale
+iPhone Reminders / Tasks.org  <-- CalDAV -->  CalDAV server (Radicale, Nextcloud, Baikal, Fastmail, iCloud)
                                                  ^
                                                  | vdirsyncer (timer, and after every husk write)
                                                  v
@@ -24,13 +24,31 @@ sync. The full design is in `docs/spec.md`.
 
 ## Install
 
+Each release carries Linux x86_64 binaries: a `linux-gnu` build and a static
+`linux-musl` one for distributions with an older glibc.
+
 ```
-cargo install --path .
+gh release download v0.1.0 --repo czepluch/husk --pattern '*linux-gnu.tar.gz'
+tar xzf husk-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+install -Dm755 husk-v0.1.0-x86_64-unknown-linux-gnu/husk ~/.local/bin/husk
 ```
 
-You need vdirsyncer with a `tasks` pair pointing at your CalDAV server
-(section 5 of the spec has a working config), and a notification daemon such
-as mako or dunst if you want alarms on the desktop.
+Or build from source with Rust 1.89 or newer:
+
+```
+cargo install --git https://github.com/czepluch/husk    # or --path . in a checkout
+```
+
+husk is developed and tested on Linux. The TUI and CLI have nothing
+Linux-specific in them, but `husk notify` shells out to `notify-send`, and
+there are no macOS builds yet.
+
+You need vdirsyncer with a `tasks` pair pointing at your CalDAV server, and
+a notification daemon such as mako or dunst if you want alarms on the desktop.
+Any server the phone apps accept works: Radicale (self-hosted, what husk was
+built against; section 5 of the spec has a working config), Nextcloud,
+Baikal, Fastmail or iCloud. Apple Reminders and Tasks.org each need the
+server added as a CalDAV account on the phone.
 
 ## Configuration
 

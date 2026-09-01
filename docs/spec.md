@@ -345,6 +345,8 @@ M5, as needed: RRULE description, subtask rendering, colors from the vdir `color
 
 After v1, before anything optional: move Radicale from the laptop to the DappNode as a package behind the HTTPS portal, following the steps in the M0 paragraph above (copy `collections/`, re-point the phones and vdirsyncer at the HTTPS URL, clear the vdirsyncer pair status, drop the laptop CA from the phones). Until then Radicale is started by hand on the laptop after each reboot.
 
+Releases: an annotated tag `vX.Y.Z` on `main`, matching the version in `Cargo.toml` and a section in `CHANGELOG.md`, triggers `.github/workflows/release.yml`, which builds `x86_64-unknown-linux-gnu` and static `x86_64-unknown-linux-musl` binaries and attaches them, with sha256 sums, to a GitHub Release whose notes are that changelog section. The repository stays private for now, so releases are reference points, not distribution; macOS builds and an AUR package come with going public. `husk` is taken on crates.io, so publishing there would need another crate name with `[[bin]] name = "husk"`. `rust-version` in `Cargo.toml` is checked by a CI job on that toolchain.
+
 Later, optional: `CaldavStore` implementing `Store` over HTTPS with `reqwest` (PROPFIND, REPORT, sync-token, If-Match on PUT). At that point vdirsyncer becomes optional and husk can run on a machine with no sync setup. Also: recurrence completion (advance `DUE` by the rule, bump `SEQUENCE`), creating projects (MKCALENDAR), attachments never.
 
 ## 10. Known pitfalls, collected up front
