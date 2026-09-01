@@ -16,3 +16,5 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      # The runner is in UTC; a second zone catches tests that assume one.
+      - run: TZ=Europe/Copenhagen cargo test

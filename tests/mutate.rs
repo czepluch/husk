@@ -621,7 +621,14 @@ fn unchanged_prompts_leave_no_trace() {
     select(&mut s.app, "1315299692917196932");
     let before = file(&s, "argot/timed-alarms-repeat.ics");
     s.app.handle_key(key('t'));
-    assert!(s.app.input.as_ref().unwrap().buffer.ends_with(" 13:00"));
+    // 13:00:01 in Europe/Copenhagen, shown in whatever zone the test runs in.
+    let expected = chrono::Utc
+        .with_ymd_and_hms(2026, 8, 31, 11, 0, 1)
+        .unwrap()
+        .with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string();
+    assert_eq!(s.app.input.as_ref().unwrap().buffer, expected);
     s.app.handle_key(code(KeyCode::Enter));
     assert_eq!(file(&s, "argot/timed-alarms-repeat.ics"), before);
     s.app.apply_notes("1315299692917196932", "");
