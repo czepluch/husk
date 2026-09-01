@@ -1,0 +1,33 @@
+# The fixed mapping from Base16 slots to husk's semantic slots, used when
+# `theme` in the config points at a scheme file. Override any slot in
+# ~/.config/husk/theme.toml.
+
+[colors]
+bg = "base00"
+fg = "base05"
+muted = "base03"
+accent = "base0B"
+border = "base02"
+border_active = "base0B"
+overdue = "base08"
+due_today = "base0A"
+due_soon = "base0D"
+done = "base03"
+tag = "base0E"
+project = "base0D"
+recurring = "base0C"
+
+[styles]
+selected = { bg = "base02", bold = true }
+title = { fg = "accent", bold = true }
+status_bar = { fg = "muted" }
+help_key = { fg = "accent", bold = true }
+pri_high = { bold = true }
+pri_medium = {}
+pri_low = { dim = true }
+
+[symbols]
+set = "unicode"
+
+[borders]
+style = "plain"

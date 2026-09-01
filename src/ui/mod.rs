@@ -4,8 +4,12 @@
 pub mod app;
 pub mod views;
 
+use std::path::Path;
 use std::process::Command;
+use std::sync::mpsc;
 use std::time::Duration;
+
+use notify::Watcher;
 
 use anyhow::{Context, Result, bail};
 use chrono::Local;
@@ -15,9 +19,24 @@ use ratatui::DefaultTerminal;
 use crate::theme::Theme;
 use app::App;
 
-pub fn run(mut app: App, theme: &Theme) -> Result<()> {
+/// Runs the TUI. `reload` re-reads the theme; it is called whenever a file
+/// under `watch` changes, so a theme can be edited while husk runs.
+pub fn run(
+    mut app: App,
+    theme: Theme,
+    reload: impl Fn() -> Result<Theme>,
+    watch: Option<&Path>,
+) -> Result<()> {
+    let (tx, changes) = mpsc::channel();
+    let mut watcher = notify::recommended_watcher(move |_: notify::Result<notify::Event>| {
+        let _ = tx.send(());
+    })
+    .ok();
+    if let (Some(watcher), Some(dir)) = (watcher.as_mut(), watch.filter(|d| d.is_dir())) {
+        let _ = watcher.watch(dir, notify::RecursiveMode::Recursive);
+    }
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &mut app, theme);
+    let result = event_loop(&mut terminal, &mut app, theme, &reload, &changes);
     ratatui::restore();
     if app.sync_busy() {
         eprintln!("husk: waiting for the sync to finish");
@@ -28,9 +47,25 @@ pub fn run(mut app: App, theme: &Theme) -> Result<()> {
     result
 }
 
-fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, theme: &Theme) -> Result<()> {
+fn event_loop(
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    mut theme: Theme,
+    reload: &impl Fn() -> Result<Theme>,
+    changes: &mpsc::Receiver<()>,
+) -> Result<()> {
     while !app.quit {
-        terminal.draw(|frame| views::draw(frame, app, theme))?;
+        if changes.try_recv().is_ok() {
+            while changes.try_recv().is_ok() {}
+            match reload() {
+                Ok(fresh) => {
+                    theme = fresh;
+                    app.message = Some("Theme reloaded".to_string());
+                }
+                Err(e) => app.message = Some(format!("theme: {e:#}")),
+            }
+        }
+        terminal.draw(|frame| views::draw(frame, app, &theme))?;
         if event::poll(Duration::from_millis(500))?
             && let Event::Key(key) = event::read()?
             && key.kind != KeyEventKind::Release

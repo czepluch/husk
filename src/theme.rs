@@ -1,8 +1,9 @@
 #![allow(clippy::disallowed_types)]
 //! Theme files, their layering and their resolution into ratatui styles.
 //! The only place colors live: the UI refers to `Theme` slots, never to a
-//! color. A built-in flavor is the base; `~/.config/husk/theme.toml` sets
-//! individual slots on top of it.
+//! color. The base is a built-in flavor or a Base16/Base24 scheme file
+//! through a fixed mapping; `~/.config/husk/theme.toml` sets individual
+//! slots on top of it.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -10,10 +11,14 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::BorderType;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+use crate::config::expand_home;
 
 const PHOSPHOR: &str = include_str!("themes/phosphor.toml");
 const ANSI: &str = include_str!("themes/ansi.toml");
+/// The Base16 slot mapping; the palette comes from the scheme file.
+const BASE16: &str = include_str!("themes/base16.toml");
 
 pub const COLOR_SLOTS: [&str; 13] = [
     "bg",
@@ -44,41 +49,58 @@ pub const STYLE_SLOTS: [&str; 7] = [
 ];
 
 /// The contents of one theme file; every key optional so files can be layered.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ThemeFile {
     pub colors: BTreeMap<String, String>,
     pub styles: BTreeMap<String, StyleSpec>,
     pub symbols: SymbolsSpec,
     pub borders: BordersSpec,
+    /// `base00` to `base17` from a scheme file, what `baseXX` refers to.
+    #[serde(skip)]
+    pub palette: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StyleSpec {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bg: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub bold: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub italic: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub underline: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub dim: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub reverse: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SymbolsSpec {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub set: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub recurring: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub overdue: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub done: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subtask: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub alarm: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BordersSpec {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub style: Option<String>,
 }
 
@@ -136,10 +158,11 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// A built-in flavor with the user's theme file, if any, laid on top.
-    pub fn load(flavor: &str, user_file: Option<&Path>) -> Result<Self> {
-        let mut file = ThemeFile::parse(builtin(flavor)?)
-            .with_context(|| format!("built-in theme {flavor}"))?;
+    /// The base named by `theme` in the config (a built-in flavor, or a
+    /// Base16/Base24 scheme file through the fixed mapping) with the user's
+    /// theme file, if any, laid on top.
+    pub fn load(theme: &str, user_file: Option<&Path>) -> Result<Self> {
+        let mut file = ThemeFile::base(theme)?;
         if let Some(path) = user_file.filter(|p| p.is_file()) {
             let text = std::fs::read_to_string(path)
                 .with_context(|| format!("read {}", path.display()))?;
@@ -149,9 +172,7 @@ impl Theme {
         }
         file.resolve()
     }
-}
 
-impl Theme {
     /// A foreground style from `#rrggbb` (an alpha suffix is ignored), for
     /// colors that come from data, such as the vdir `color` file, rather
     /// than from the theme.
@@ -162,6 +183,141 @@ impl Theme {
             .filter(|_| digits.len() == 6 || digits.len() == 8)?;
         parse_hex(rgb).map(|color| Style::new().fg(color))
     }
+
+    /// The resolved theme as a theme file, so a user can start from the
+    /// current look. Colors come out as hex, ANSI names or `default`.
+    pub fn dump(&self) -> Result<String> {
+        Ok(toml::to_string_pretty(&self.to_file())?)
+    }
+
+    fn to_file(&self) -> ThemeFile {
+        let color = |style: Style| color_name(style.fg.unwrap_or(Color::Reset));
+        let colors = [
+            ("bg", color_name(self.base.bg.unwrap_or(Color::Reset))),
+            ("fg", color(self.base)),
+            ("muted", color(self.muted)),
+            ("accent", color(self.accent)),
+            ("border", color(self.border)),
+            ("border_active", color(self.border_active)),
+            ("overdue", color(self.overdue)),
+            ("due_today", color(self.due_today)),
+            ("due_soon", color(self.due_soon)),
+            ("done", color(self.done)),
+            ("tag", color(self.tag)),
+            ("project", color(self.project)),
+            ("recurring", color(self.recurring)),
+        ];
+        let styles = [
+            ("selected", self.selected),
+            ("title", self.title),
+            ("status_bar", self.status_bar),
+            ("help_key", self.help_key),
+            ("pri_high", self.pri_high),
+            ("pri_medium", self.pri_medium),
+            ("pri_low", self.pri_low),
+        ];
+        ThemeFile {
+            colors: colors
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            styles: styles
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), style_spec(v)))
+                .collect(),
+            symbols: SymbolsSpec {
+                set: None,
+                recurring: Some(self.symbols.recurring.clone()),
+                overdue: Some(self.symbols.overdue.clone()),
+                done: Some(self.symbols.done.clone()),
+                subtask: Some(self.symbols.subtask.clone()),
+                alarm: Some(self.symbols.alarm.clone()),
+            },
+            borders: BordersSpec {
+                style: Some(
+                    match self.border_type {
+                        Some(BorderType::Rounded) => "rounded",
+                        Some(BorderType::Double) => "double",
+                        Some(BorderType::Thick) => "thick",
+                        Some(_) => "plain",
+                        None => "none",
+                    }
+                    .to_string(),
+                ),
+            },
+            palette: BTreeMap::new(),
+        }
+    }
+}
+
+fn style_spec(style: Style) -> StyleSpec {
+    let has = |m: Modifier| style.add_modifier.contains(m);
+    StyleSpec {
+        fg: style.fg.map(color_name),
+        bg: style.bg.map(color_name),
+        bold: has(Modifier::BOLD),
+        italic: has(Modifier::ITALIC),
+        underline: has(Modifier::UNDERLINED),
+        dim: has(Modifier::DIM),
+        reverse: has(Modifier::REVERSED),
+    }
+}
+
+/// The inverse of `parse_color`, for `husk theme dump`.
+fn color_name(color: Color) -> String {
+    match color {
+        Color::Reset => "default".to_string(),
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+        Color::Indexed(n) => n.to_string(),
+        Color::Black => "black".to_string(),
+        Color::Red => "red".to_string(),
+        Color::Green => "green".to_string(),
+        Color::Yellow => "yellow".to_string(),
+        Color::Blue => "blue".to_string(),
+        Color::Magenta => "magenta".to_string(),
+        Color::Cyan => "cyan".to_string(),
+        Color::Gray => "white".to_string(),
+        Color::DarkGray => "bright_black".to_string(),
+        Color::LightRed => "bright_red".to_string(),
+        Color::LightGreen => "bright_green".to_string(),
+        Color::LightYellow => "bright_yellow".to_string(),
+        Color::LightBlue => "bright_blue".to_string(),
+        Color::LightMagenta => "bright_magenta".to_string(),
+        Color::LightCyan => "bright_cyan".to_string(),
+        Color::White => "bright_white".to_string(),
+    }
+}
+
+/// The `base00` to `base17` slots of a Base16 or Base24 scheme file, in
+/// either layout (top-level `base00: "1d2021"` or under `palette:` with a
+/// `#`). Only the palette is read; everything else in the file is ignored.
+pub fn parse_scheme(text: &str) -> Result<BTreeMap<String, String>> {
+    let mut palette = BTreeMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let key = key.trim().trim_matches('"').to_ascii_lowercase();
+        if key.len() != 6 || !key.starts_with("base") {
+            continue;
+        }
+        let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
+        let hex = value.trim_start_matches('#');
+        if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("{key}: {value:?} is not a hex color");
+        }
+        palette.insert(key, hex.to_string());
+    }
+    for slot in (0..16).map(|n| format!("base{n:02x}")) {
+        if !palette.contains_key(&slot) {
+            bail!("scheme file has no {slot}");
+        }
+    }
+    Ok(palette)
 }
 
 /// The source of a built-in flavor.
@@ -174,6 +330,25 @@ pub fn builtin(name: &str) -> Result<&'static str> {
 }
 
 impl ThemeFile {
+    /// A built-in flavor by name, or a scheme file by path through the
+    /// Base16 mapping.
+    pub fn base(theme: &str) -> Result<Self> {
+        if let Ok(text) = builtin(theme) {
+            return Self::parse(text).with_context(|| format!("built-in theme {theme}"));
+        }
+        let path = expand_home(Path::new(theme));
+        if !path.is_file() {
+            bail!(
+                "theme {theme:?} is neither a built-in flavor (phosphor, ansi) nor a scheme file"
+            );
+        }
+        let text =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        let mut file = Self::parse(BASE16).context("built-in base16 mapping")?;
+        file.palette = parse_scheme(&text).with_context(|| format!("scheme {}", path.display()))?;
+        Ok(file)
+    }
+
     pub fn parse(text: &str) -> Result<Self> {
         let file: Self = toml::from_str(text)?;
         if let Some(slot) = file
@@ -206,6 +381,9 @@ impl ThemeFile {
         s.subtask = o.subtask.or(s.subtask.take());
         s.alarm = o.alarm.or(s.alarm.take());
         self.borders.style = over.borders.style.or(self.borders.style.take());
+        if !over.palette.is_empty() {
+            self.palette = over.palette;
+        }
     }
 
     pub fn resolve(&self) -> Result<Theme> {
@@ -248,16 +426,16 @@ impl ThemeFile {
             .colors
             .get(slot)
             .with_context(|| format!("color slot {slot} is not set"))?;
-        parse_color(value, &self.colors, 0).with_context(|| format!("color slot {slot}"))
+        parse_color(value, self, 0).with_context(|| format!("color slot {slot}"))
     }
 
     fn style(&self, spec: &StyleSpec) -> Result<Style> {
         let mut style = Style::new();
         if let Some(fg) = &spec.fg {
-            style = style.fg(parse_color(fg, &self.colors, 0)?);
+            style = style.fg(parse_color(fg, self, 0)?);
         }
         if let Some(bg) = &spec.bg {
-            style = style.bg(parse_color(bg, &self.colors, 0)?);
+            style = style.bg(parse_color(bg, self, 0)?);
         }
         for (on, modifier) in [
             (spec.bold, Modifier::BOLD),
@@ -302,10 +480,9 @@ impl ThemeFile {
     }
 }
 
-/// `default`, `#rrggbb`, an ANSI name, a 0 to 255 index, or the name of a
-/// color slot (one level deep). `base0X` references need a Base16 scheme,
-/// which is not supported yet.
-fn parse_color(value: &str, slots: &BTreeMap<String, String>, depth: u8) -> Result<Color> {
+/// `default`, `#rrggbb`, an ANSI name, a 0 to 255 index, a `baseXX` slot of
+/// the loaded scheme, or the name of a color slot (one level deep).
+fn parse_color(value: &str, file: &ThemeFile, depth: u8) -> Result<Color> {
     let v = value.trim();
     if v.eq_ignore_ascii_case("default") {
         return Ok(Color::Reset);
@@ -319,17 +496,26 @@ fn parse_color(value: &str, slots: &BTreeMap<String, String>, depth: u8) -> Resu
     if let Ok(index) = v.parse::<u8>() {
         return Ok(Color::Indexed(index));
     }
-    if v.starts_with("base0") || v.starts_with("base1") {
-        bail!("{value:?} is a Base16 reference, which needs a scheme file (not supported yet)");
+    let lower = v.to_ascii_lowercase();
+    if lower.starts_with("base") && lower.len() == 6 {
+        let hex = file.palette.get(&lower).with_context(|| {
+            if file.palette.is_empty() {
+                format!("{value:?} is a Base16 reference, but no scheme file is loaded")
+            } else {
+                format!("the scheme has no {value}")
+            }
+        })?;
+        return parse_hex(hex).with_context(|| format!("bad hex color {hex:?} for {value}"));
     }
     if COLOR_SLOTS.contains(&v) {
         if depth > 0 {
             bail!("color slot {v:?} refers to another slot; only one level is allowed");
         }
-        let referenced = slots
+        let referenced = file
+            .colors
             .get(v)
             .with_context(|| format!("color slot {v:?} is not set"))?;
-        return parse_color(referenced, slots, depth + 1);
+        return parse_color(referenced, file, depth + 1);
     }
     bail!("unknown color {value:?}")
 }
@@ -450,7 +636,7 @@ mod tests {
 
     #[test]
     fn indexed_and_named_colors_parse() {
-        let none = BTreeMap::new();
+        let none = ThemeFile::default();
         assert_eq!(parse_color("208", &none, 0).unwrap(), Color::Indexed(208));
         assert_eq!(
             parse_color("Bright_Red", &none, 0).unwrap(),
@@ -460,44 +646,74 @@ mod tests {
         assert_eq!(parse_color("DEFAULT", &none, 0).unwrap(), Color::Reset);
     }
 
+    const CLASSIC_SCHEME: &str = "scheme: \"Test dark\"\nauthor: \"nobody\"\nbase00: \"1d2021\"\nbase01: \"3c3836\"\nbase02: \"504945\"\nbase03: \"665c54\"\nbase04: \"bdae93\"\nbase05: \"d5c4a1\"\nbase06: \"ebdbb2\"\nbase07: \"fbf1c7\"\nbase08: \"fb4934\"\nbase09: \"fe8019\"\nbase0A: \"fabd2f\"\nbase0B: \"b8bb26\"\nbase0C: \"8ec07c\"\nbase0D: \"83a598\"\nbase0E: \"d3869b\"\nbase0F: \"d65d0e\"\n";
+    const NEW_SCHEME: &str = "system: \"base16\"\nname: \"Test\"\nvariant: \"dark\"\npalette:\n  base00: \"#1d2021\"\n  base01: \"#3c3836\"\n  base02: \"#504945\"\n  base03: \"#665c54\"\n  base04: \"#bdae93\"\n  base05: \"#d5c4a1\"\n  base06: \"#ebdbb2\"\n  base07: \"#fbf1c7\"\n  base08: \"#fb4934\"\n  base09: \"#fe8019\"\n  base0A: \"#fabd2f\"\n  base0B: \"#b8bb26\"\n  base0C: \"#8ec07c\"\n  base0D: \"#83a598\"\n  base0E: \"#d3869b\"\n  base0F: \"#d65d0e\"\n";
+
     #[test]
-    fn user_file_is_layered_on_the_flavor() {
-        let dir = std::env::temp_dir().join(format!("husk-theme-{}", std::process::id()));
+    fn scheme_files_parse_in_both_layouts() {
+        let classic = parse_scheme(CLASSIC_SCHEME).unwrap();
+        let newer = parse_scheme(NEW_SCHEME).unwrap();
+        assert_eq!(classic, newer);
+        assert_eq!(classic["base08"], "fb4934");
+        let err = parse_scheme("base00: \"1d2021\"\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("base01"), "{err}");
+        assert!(parse_scheme("base00: \"zzzzzz\"\n").is_err());
+    }
+
+    #[test]
+    fn a_scheme_maps_onto_the_slots_and_can_be_overridden() {
+        let dir = std::env::temp_dir().join(format!("husk-scheme-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("theme.toml");
-        std::fs::write(
-            &path,
-            "[styles]\ntitle = { underline = true }\n[symbols]\nset = \"nope\"\n",
-        )
-        .unwrap();
-        assert!(
-            Theme::load("phosphor", Some(&path)).is_err(),
-            "unknown symbol set"
-        );
-        std::fs::write(
-            &path,
-            "[styles]\ntitle = { underline = true }\n[symbols]\nset = \"ascii\"\n",
-        )
-        .unwrap();
-        let theme = Theme::load("phosphor", Some(&path)).unwrap();
+        let scheme = dir.join("gruvbox.yaml");
+        std::fs::write(&scheme, NEW_SCHEME).unwrap();
+        let theme = Theme::load(scheme.to_str().unwrap(), None).unwrap();
         assert_eq!(
-            theme.title,
-            Style::new().add_modifier(Modifier::UNDERLINED),
-            "a style slot is replaced whole"
+            theme.overdue,
+            Style::new().fg(Color::Rgb(0xfb, 0x49, 0x34)),
+            "base08"
         );
-        assert_eq!(theme.symbols.done, "x");
-        assert_eq!(theme.symbols.overdue, "<");
         assert_eq!(
             theme.accent,
-            Style::new().fg(Color::Rgb(0x39, 0xff, 0x14)),
-            "untouched"
+            Style::new().fg(Color::Rgb(0xb8, 0xbb, 0x26)),
+            "base0B"
         );
-        let missing = dir.join("missing.toml");
-        assert!(
-            Theme::load("phosphor", Some(&missing)).is_ok(),
-            "no file, no overrides"
+        assert_eq!(theme.base.bg, Some(Color::Rgb(0x1d, 0x20, 0x21)), "base00");
+        assert_eq!(
+            theme.tag,
+            Style::new().fg(Color::Rgb(0xd3, 0x86, 0x9b)),
+            "base0E"
         );
+
+        let user = dir.join("theme.toml");
+        std::fs::write(&user, "[colors]\naccent = \"base09\"\ntag = \"#ffffff\"\n").unwrap();
+        let theme = Theme::load(scheme.to_str().unwrap(), Some(&user)).unwrap();
+        assert_eq!(
+            theme.accent,
+            Style::new().fg(Color::Rgb(0xfe, 0x80, 0x19)),
+            "the user file may use baseXX"
+        );
+        assert_eq!(theme.tag, Style::new().fg(Color::Rgb(0xff, 0xff, 0xff)));
+
+        let err = Theme::load("phosphor", Some(&user)).unwrap_err();
+        assert!(format!("{err:#}").contains("no scheme file"), "{err:#}");
+        assert!(Theme::load(dir.join("missing.yaml").to_str().unwrap(), None).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dump_round_trips_through_the_parser() {
+        for flavor in ["phosphor", "ansi"] {
+            let theme = Theme::load(flavor, None).unwrap();
+            let text = theme.dump().unwrap();
+            assert!(
+                text.contains("[colors]") && text.contains("[styles.selected]"),
+                "{text}"
+            );
+            let again = ThemeFile::parse(&text).unwrap().resolve().unwrap();
+            assert_eq!(again, theme, "{flavor}:\n{text}");
+        }
     }
 
     #[test]

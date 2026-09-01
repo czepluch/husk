@@ -54,12 +54,25 @@ enum Command {
         #[arg(long, value_name = "FILE")]
         state: Option<PathBuf>,
     },
+    /// Print or check theme files
+    Theme {
+        #[command(subcommand)]
+        action: ThemeAction,
+    },
     /// Run the sync command now
     Sync {
         /// First discover new lists and their names (vdirsyncer discover, metasync)
         #[arg(long)]
         discover: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum ThemeAction {
+    /// Print the theme in use, fully resolved, as a theme.toml to start from
+    Dump,
+    /// Validate a theme file against the current base and report problems
+    Check { file: PathBuf },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -79,11 +92,14 @@ fn main() -> Result<()> {
     let store = VdirStore::new(&config.vdir);
     match args.command.unwrap_or(Command::Tui) {
         Command::Tui => {
-            let theme = Theme::load(&config.theme, Config::theme_file().as_deref())?;
+            let name = config.theme.clone();
+            let user_file = Config::theme_file();
+            let reload = move || Theme::load(&name, user_file.as_deref());
+            let theme = reload()?;
             let vdir = config.vdir.clone();
             let app = App::new(config, Box::new(store), Local::now())
                 .with_context(|| format!("reading {}", vdir.display()))?;
-            ui::run(app, &theme)
+            ui::run(app, theme, reload, Config::dir().as_deref())
         }
         Command::Add { text } => {
             let task = cli::add(&store, &config, &text.join(" "), Local::now())?;
@@ -148,6 +164,19 @@ fn main() -> Result<()> {
             husk::notify::run(&tasks, &projects, &path, Utc::now(), &config, nag, dry_run)?;
             Ok(())
         }
+        Command::Theme { action } => match action {
+            ThemeAction::Dump => {
+                let theme = Theme::load(&config.theme, Config::theme_file().as_deref())?;
+                print!("{}", theme.dump()?);
+                Ok(())
+            }
+            ThemeAction::Check { file } => {
+                Theme::load(&config.theme, Some(&file))
+                    .with_context(|| format!("{} does not apply", file.display()))?;
+                println!("{}: ok on top of {}", file.display(), config.theme);
+                Ok(())
+            }
+        },
         Command::Sync { discover } => {
             if config.sync_command.is_empty() {
                 bail!("sync_command is empty in the config");
