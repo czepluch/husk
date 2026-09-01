@@ -260,6 +260,11 @@ fn a_needs_a_project_and_honours_overrides() {
     );
     assert!(find_file(&s, "life", "No home").is_none());
     assert_eq!(s.app.mode, Mode::Input, "a failed prompt stays open");
+    assert!(
+        render(&s.app).contains("default_project"),
+        "the reason is visible while the prompt is open:\n{}",
+        render(&s.app)
+    );
     s.app.handle_key(code(KeyCode::Esc));
 
     s.app.handle_key(key('a'));

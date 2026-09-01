@@ -534,11 +534,16 @@ fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
         ),
         InputKind::Tags => ("tags", "  comma separated"),
     };
+    // A failed submit keeps the prompt open; its reason replaces the hint.
+    let trailer = match &app.message {
+        Some(message) => Span::styled(format!("  {message}"), theme.overdue),
+        None => Span::styled(hint.to_string(), theme.muted),
+    };
     Line::from(vec![
         Span::styled(format!(" {prompt}> "), theme.help_key),
         Span::raw(input.buffer.clone()),
         Span::styled("▌", theme.accent),
-        Span::styled(hint.to_string(), theme.muted),
+        trailer,
     ])
 }
 
