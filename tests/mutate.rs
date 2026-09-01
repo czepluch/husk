@@ -79,7 +79,7 @@ fn find_file(s: &Sample, project: &str, needle: &str) -> Option<String> {
 
 /// Moves the cursor onto a task in the All view.
 fn select(app: &mut App, uid: &str) {
-    app.view_index = 2;
+    app.view_index = 3;
     app.handle_key(key('g'));
     for _ in 0..50 {
         if app.selected_task().is_some_and(|t| t.uid == uid) {
@@ -124,7 +124,7 @@ fn d_completes_with_the_apple_triple_and_u_reopens() {
     ] {
         assert!(text.contains(line), "{line:?} missing in\n{text}");
     }
-    assert_eq!(s.app.message.as_deref(), Some("Done: Test task"));
+    assert_eq!(s.app.message.as_deref(), Some("Done: Test task (u undo)"));
     assert!(
         !s.app.visible_tasks().iter().any(|t| t.uid == TEST_TASK),
         "done tasks leave the list"
@@ -145,7 +145,10 @@ fn d_completes_with_the_apple_triple_and_u_reopens() {
     select(&mut s.app, TEST_TASK);
     assert!(s.app.selected_task().unwrap().is_done());
     s.app.handle_key(key('d'));
-    assert_eq!(s.app.message.as_deref(), Some("Reopened: Test task"));
+    assert_eq!(
+        s.app.message.as_deref(),
+        Some("Reopened: Test task (u undo)")
+    );
     let text = file(&s, "life/no-due.ics");
     assert!(
         text.contains("STATUS:NEEDS-ACTION\n") && !text.contains("PERCENT"),
@@ -181,7 +184,10 @@ fn x_confirms_deletes_and_u_restores() {
     s.app.handle_key(key('x'));
     s.app.handle_key(key('y'));
     assert!(!s.dir.path().join("life/no-due.ics").exists());
-    assert_eq!(s.app.message.as_deref(), Some("Deleted: Test task"));
+    assert_eq!(
+        s.app.message.as_deref(),
+        Some("Deleted: Test task (u undo)")
+    );
     assert!(!s.app.tasks.iter().any(|t| t.uid == TEST_TASK));
 
     s.app.handle_key(key('u'));
@@ -202,14 +208,14 @@ fn x_confirms_deletes_and_u_restores() {
 #[test]
 fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
     let mut s = sample();
-    s.app.view_index = 4;
+    s.app.view_index = 5;
     assert_eq!(s.app.view_name(&s.app.view()), "Life");
     s.app.handle_key(key('a'));
     assert_eq!(s.app.mode, Mode::Input);
     assert!(render(&s.app).contains("add> "));
     type_text(&mut s.app, "Call bank due:tomorrow 09:00 +money pri:h");
     s.app.handle_key(code(KeyCode::Enter));
-    assert_eq!(s.app.message.as_deref(), Some("Added: Call bank"));
+    assert_eq!(s.app.message.as_deref(), Some("Added: Call bank (u undo)"));
     let text = find_file(&s, "life", "SUMMARY:Call bank").expect("created in life");
     let due = Local
         .with_ymd_and_hms(2026, 9, 1, 9, 0, 0)
@@ -239,7 +245,7 @@ fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
 #[test]
 fn a_needs_a_project_and_honours_overrides() {
     let mut s = sample();
-    s.app.view_index = 0;
+    s.app.view_index = 1;
     s.app.handle_key(key('a'));
     type_text(&mut s.app, "No home");
     s.app.handle_key(code(KeyCode::Enter));
@@ -381,7 +387,7 @@ fn m_moves_through_the_picker_and_u_moves_back() {
     assert!(render(&s.app).contains("Move to"));
     s.app.handle_key(key('k'));
     s.app.handle_key(code(KeyCode::Enter));
-    assert_eq!(s.app.message.as_deref(), Some("Moved to Argot"));
+    assert_eq!(s.app.message.as_deref(), Some("Moved to Argot (u undo)"));
     assert!(s.dir.path().join("argot/no-due.ics").exists());
     assert!(!s.dir.path().join("life/no-due.ics").exists());
     assert_eq!(s.app.selected_task().unwrap().project.as_str(), "argot");
@@ -408,7 +414,10 @@ fn notes_go_through_the_editor_request_and_apply_notes() {
     assert_eq!(s.app.take_editor_request(), None, "taken once");
 
     s.app.apply_notes(TEST_TASK, "line one\nline two\n\n");
-    assert_eq!(s.app.message.as_deref(), Some("Notes saved: Test task"));
+    assert_eq!(
+        s.app.message.as_deref(),
+        Some("Notes saved: Test task (u undo)")
+    );
     assert!(file(&s, "life/no-due.ics").contains("DESCRIPTION:line one\\nline two\n"));
     s.app.handle_key(key('n'));
     assert_eq!(
@@ -755,7 +764,7 @@ fn undoing_a_move_keeps_the_task_when_the_way_back_is_gone() {
 #[test]
 fn a_failed_prompt_keeps_its_text() {
     let mut s = sample();
-    s.app.view_index = 4;
+    s.app.view_index = 5;
     s.app.handle_key(key('a'));
     type_text(&mut s.app, "reply to @jacob about lunch");
     s.app.handle_key(code(KeyCode::Enter));
@@ -773,6 +782,26 @@ fn a_failed_prompt_keeps_its_text() {
     assert_eq!(s.app.mode, Mode::Normal);
     assert_eq!(
         s.app.message.as_deref(),
-        Some("Added: reply to about lunch")
+        Some("Added: reply to about lunch (u undo)")
     );
+}
+
+#[test]
+fn messages_fade_after_five_seconds_or_on_a_key() {
+    use chrono::TimeDelta;
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('d'));
+    assert!(s.app.message.is_some());
+    s.app.now += TimeDelta::seconds(4);
+    s.app.poll();
+    assert!(s.app.message.is_some(), "still shown after four seconds");
+    s.app.now += TimeDelta::seconds(2);
+    s.app.poll();
+    assert_eq!(s.app.message, None, "gone after five");
+
+    s.app.handle_key(key('u'));
+    assert!(s.app.message.is_some());
+    s.app.handle_key(key('j'));
+    assert_eq!(s.app.message, None, "any key clears it");
 }

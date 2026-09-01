@@ -19,11 +19,17 @@ const UNDO_DEPTH: usize = 20;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum View {
+    Overdue,
     Today,
     Upcoming,
     All,
     Project(ProjectId),
 }
+
+/// The smart views ahead of the projects in the left pane.
+pub const SMART_VIEWS: [View; 4] = [View::Overdue, View::Today, View::Upcoming, View::All];
+/// How long a bar message stays without a key press.
+const MESSAGE_SECONDS: i64 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pane {
@@ -110,8 +116,9 @@ pub struct App {
     /// Cursor in the project picker, and the task it will move.
     pub pick_index: usize,
     pick_uid: Option<String>,
-    /// Shown in the bar until the next key.
+    /// Shown in the bar until the next key or for a few seconds.
     pub message: Option<String>,
+    message_at: DateTime<Local>,
     undo: Vec<Undo>,
     editor_request: Option<(String, String)>,
     seen_runs: u64,
@@ -137,7 +144,7 @@ impl App {
             projects,
             tasks,
             pane: Pane::Tasks,
-            view_index: 0,
+            view_index: 1,
             selected: None,
             cursor: 0,
             mode: Mode::Normal,
@@ -151,6 +158,7 @@ impl App {
             pick_index: 0,
             pick_uid: None,
             message: None,
+            message_at: now,
             undo: Vec::new(),
             editor_request: None,
             seen_runs: 0,
@@ -160,9 +168,9 @@ impl App {
         })
     }
 
-    /// The left pane: the three smart views, then one view per project.
+    /// The left pane: the smart views, then one view per project.
     pub fn views(&self) -> Vec<View> {
-        [View::Today, View::Upcoming, View::All]
+        SMART_VIEWS
             .into_iter()
             .chain(self.projects.iter().map(|p| View::Project(p.id.clone())))
             .collect()
@@ -177,6 +185,7 @@ impl App {
 
     pub fn view_name(&self, view: &View) -> String {
         match view {
+            View::Overdue => "Overdue".to_string(),
             View::Today => "Today".to_string(),
             View::Upcoming => "Upcoming".to_string(),
             View::All => "All".to_string(),
@@ -257,6 +266,9 @@ impl App {
     /// Reloads when the store changed underneath (a vdirsyncer run husk did
     /// not start, a hand edit) or when a sync run this app asked for ended.
     pub fn poll(&mut self) {
+        if self.message.is_some() && (self.now - self.message_at).num_seconds() >= MESSAGE_SECONDS {
+            self.message = None;
+        }
         let state = self.syncer.state();
         let finished = state.runs != self.seen_runs;
         let changed = self.store.stamp().is_ok_and(|stamp| stamp != self.stamp);
@@ -634,7 +646,7 @@ impl App {
         let task = self.store.create(&project, new)?;
         self.push_undo(Undo::Created(task.uid.clone()));
         self.after_write(Some(&task.uid));
-        Ok(format!("Added: {}", parsed.summary))
+        Ok(format!("Added: {} (u undo)", parsed.summary))
     }
 
     fn toggle_done(&mut self) {
@@ -714,7 +726,7 @@ impl App {
         }
         self.push_undo(Undo::Restore(Box::new(before)));
         self.after_write(Some(uid));
-        Ok(format!("{label}: {}", task.summary))
+        Ok(format!("{label}: {} (u undo)", task.summary))
     }
 
     fn delete(&mut self, uid: &str) -> Result<String> {
@@ -723,7 +735,7 @@ impl App {
         let summary = task.summary.clone();
         self.push_undo(Undo::Restore(Box::new(task)));
         self.after_write(None);
-        Ok(format!("Deleted: {summary}"))
+        Ok(format!("Deleted: {summary} (u undo)"))
     }
 
     fn move_task_to(&mut self, uid: &str, project: &ProjectId) -> Result<String> {
@@ -734,7 +746,7 @@ impl App {
         self.store.move_to(uid, project)?;
         self.push_undo(Undo::Restore(Box::new(task)));
         self.after_write(Some(uid));
-        Ok(format!("Moved to {}", self.project_name(project)))
+        Ok(format!("Moved to {} (u undo)", self.project_name(project)))
     }
 
     fn undo(&mut self) {
@@ -803,6 +815,7 @@ impl App {
             Ok(text) => Some(text),
             Err(e) => Some(format!("{e:#}")),
         };
+        self.message_at = self.now;
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -902,7 +915,7 @@ pub fn bucket(due: Option<Due>, now: DateTime<Local>) -> Bucket {
 
 /// Done tasks are hidden unless asked for. When shown, they qualify by when
 /// they were finished: Today shows what was completed today, Upcoming the
-/// last seven days, All and the projects everything.
+/// last seven days, All and the projects everything, Overdue nothing.
 pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) -> bool {
     if task.is_done() {
         if !show_done {
@@ -911,6 +924,7 @@ pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) 
         return match view {
             View::All => true,
             View::Project(id) => &task.project == id,
+            View::Overdue => false,
             View::Today | View::Upcoming => {
                 let Some(at) = task.completed else {
                     return false;
@@ -927,11 +941,9 @@ pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) 
     match view {
         View::All => true,
         View::Project(id) => &task.project == id,
+        View::Overdue => bucket(task.due, now) == Bucket::Overdue,
         View::Today => matches!(bucket(task.due, now), Bucket::Overdue | Bucket::Today),
-        View::Upcoming => matches!(
-            bucket(task.due, now),
-            Bucket::Overdue | Bucket::Today | Bucket::Soon
-        ),
+        View::Upcoming => matches!(bucket(task.due, now), Bucket::Today | Bucket::Soon),
     }
 }
 

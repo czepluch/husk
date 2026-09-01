@@ -9,7 +9,8 @@ use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap}
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::app::{
-    App, Bucket, InputKind, Mode, Pane, View, alarm_text, bucket, due_detail, due_label, stamp,
+    App, Bucket, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text, bucket, due_detail,
+    due_label, stamp,
 };
 use crate::model::{Priority, Status, Task};
 use crate::theme::Theme;
@@ -90,19 +91,20 @@ fn draw_views(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let mut items = Vec::new();
     let mut selected = 0;
     for (i, view) in app.views().iter().enumerate() {
-        if i == 3 {
+        if i == SMART_VIEWS.len() {
             items.push(ListItem::new(Line::styled(
                 "─".repeat(inner_width),
                 theme.border,
             )));
         }
+        let count = app.count(view);
         let style = match view {
             View::Project(_) => theme.project,
+            View::Overdue if count > 0 => theme.overdue,
             _ => Style::default(),
         };
         let name = fit(&app.view_name(view), name_width);
         let pad = " ".repeat(name_width.saturating_sub(name.width()));
-        let count = app.count(view);
         let row = format!(" {name}{pad}{count:>4} ");
         items.push(ListItem::new(Line::styled(row, style)));
         if i == app.view_index {
@@ -472,6 +474,8 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             &[
                 ("a", "add"),
                 ("d", "done"),
+                ("x", "del"),
+                ("u", "undo"),
                 ("e", "edit"),
                 ("t", "due"),
                 ("p", "pri"),

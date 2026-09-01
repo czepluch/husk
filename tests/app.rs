@@ -209,20 +209,20 @@ fn views_select_by_bucket_hide_done_and_sort_overdue_first() {
     );
     assert_eq!(app.due_count(), 4);
 
-    app.view_index = 1;
+    app.view_index = 2;
     assert_eq!(app.view(), View::Upcoming);
     assert_eq!(
         uids(app),
-        vec![
-            "overdue-day",
-            "today-early",
-            "today-all-day",
-            "today-later",
-            "soon"
-        ]
+        vec!["today-all-day", "today-later", "soon"],
+        "no overdue in Upcoming, and a passed time today is overdue"
     );
 
-    app.view_index = 2;
+    app.view_index = 0;
+    assert_eq!(app.view(), View::Overdue);
+    assert_eq!(uids(app), vec!["overdue-day", "today-early"]);
+    assert_eq!(app.count(&View::Overdue), 2);
+
+    app.view_index = 3;
     assert_eq!(
         uids(app),
         vec![
@@ -236,13 +236,13 @@ fn views_select_by_bucket_hide_done_and_sort_overdue_first() {
         ]
     );
 
-    app.view_index = 3;
+    app.view_index = 4;
     assert_eq!(app.view(), View::Project(ProjectId::new("argot")));
     assert_eq!(uids(app), vec!["overdue-day", "soon"]);
 
     assert_eq!(app.count(&View::Today), 4);
     assert_eq!(app.count(&View::All), 7, "done tasks are hidden");
-    assert_eq!(app.views().len(), 5);
+    assert_eq!(app.views().len(), 6);
 }
 
 #[test]
@@ -286,7 +286,7 @@ fn priority_then_creation_break_ties_on_equal_due() {
     ];
     let mut s = make(&[], tasks);
     let app = &mut s.app;
-    app.view_index = 2;
+    app.view_index = 3;
     assert_eq!(
         uids(app),
         vec!["high", "medium-older", "medium-newer", "low", "none"]
@@ -337,7 +337,7 @@ fn due_labels_are_short_and_relative() {
 fn filter_matches_summary_tags_and_project_case_insensitively() {
     let mut s = sample();
     let app = &mut s.app;
-    app.view_index = 2;
+    app.view_index = 3;
     app.filter = "GUSTAV".to_string();
     assert_eq!(uids(app), vec!["today-later"]);
     app.filter = "#health".to_string();
@@ -419,6 +419,7 @@ fn frames_render_the_layout_the_detail_and_the_help() {
     let text = screen(&terminal);
     for expected in [
         "Projects",
+        "Overdue",
         "Today",
         "Upcoming",
         "All",
@@ -541,7 +542,7 @@ fn priority_is_shown_as_title_weight() {
     ];
     let mut s = make(&[], tasks);
     let app = &mut s.app;
-    app.view_index = 2;
+    app.view_index = 3;
     let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
     terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let buffer = terminal.backend().buffer();
@@ -618,14 +619,14 @@ fn completed_tasks_qualify_for_today_and_upcoming_by_completion_time() {
     assert!(!uids(app).contains(&"done-old"));
     assert!(!uids(app).contains(&"done-when"));
 
-    app.view_index = 1;
+    app.view_index = 2;
     assert!(uids(app).contains(&"done"));
     assert!(
         !uids(app).contains(&"done-old"),
         "ten days ago is outside Upcoming"
     );
 
-    app.view_index = 2;
+    app.view_index = 3;
     let all = uids(app);
     assert!(all.contains(&"done") && all.contains(&"done-old") && all.contains(&"done-when"));
     assert_eq!(app.count(&View::All), 7, "counts stay pending-only");
@@ -658,7 +659,7 @@ fn due_column_grows_for_wide_labels() {
     ];
     let mut s = make(&[], tasks);
     let app = &mut s.app;
-    app.view_index = 2;
+    app.view_index = 3;
     let mut terminal = Terminal::new(TestBackend::new(70, 8)).unwrap();
     terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
@@ -687,7 +688,7 @@ fn tall_rows_are_capped_and_long_words_break() {
     ];
     let mut s = make(&[], tasks);
     let app = &mut s.app;
-    app.view_index = 2;
+    app.view_index = 3;
     let mut terminal = Terminal::new(TestBackend::new(50, 12)).unwrap();
     terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
@@ -733,7 +734,7 @@ fn detail_scrolls_and_help_returns_to_it() {
     )];
     let mut s = make(&[], tasks);
     let app = &mut s.app;
-    app.view_index = 2;
+    app.view_index = 3;
     app.show_done = true;
     let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
 
@@ -774,7 +775,7 @@ fn long_project_names_are_cut_with_the_count_kept() {
     let tasks = vec![task("t", "t", "house", None, "")];
     let s = make(&[("house", "Indkøb og husholdning i lejligheden")], tasks);
     let app = &s.app;
-    let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
     terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
     let row = text.lines().find(|l| l.contains("Indkøb")).unwrap();
@@ -790,7 +791,7 @@ fn small_terminals_render_content_in_every_mode() {
     let theme = Theme::load("phosphor", None).unwrap();
     let mut s = sample();
     let app = &mut s.app;
-    app.view_index = 2;
+    app.view_index = 3;
     for (w, h) in [(20, 5), (30, 8), (50, 12), (5, 3)] {
         for mode in [Mode::Normal, Mode::Detail, Mode::Help] {
             app.mode = mode;
