@@ -76,8 +76,9 @@ Quick add reads `due:` (`today`, `tomorrow`, `fri`, `next mon`, `+2d`,
 `pri:H|M|L`, `+tag` and `@list`. Anything else is the title. The due prompt
 (`t`) takes the same date words; an empty answer clears the date.
 
-Setting a time on a task adds the alarms from `default_alarm_leads`, which is
-what makes the phones notify too.
+Setting a time on a task that has no alarms adds the ones from
+`default_alarm_leads`, which is what makes the phones notify too; existing
+alarms are left alone.
 
 ## The CLI
 
@@ -94,7 +95,7 @@ Hyprland capture keybind: `fuzzel --dmenu | xargs -r husk add`.
 Waybar badge: `husk list --json | jq length` counts tasks due today or
 overdue; `--view overdue` for the overdue count alone. `list --json` rows carry
 `uid`, `summary`, `project`, `due` (RFC 3339 or `YYYY-MM-DD`), `due_label`,
-`overdue`, `priority`, `tags`, `recurring` and `parent`.
+`overdue`, `priority`, `tags`, `recurring`, `parent` and `project_id`.
 
 ## Notifications
 

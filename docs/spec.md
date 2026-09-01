@@ -200,7 +200,7 @@ Layout, ratatui plus crossterm:
  a add  d done  e edit  t due  p pri  m move  / filter  s sync  ? help
 ```
 
-Views, in the order they appear: `Overdue`, `Today` (due today or overdue, all projects), `Upcoming` (today and the next 7 days), `All`, one per project. Today is selected at startup. `c` toggles completed tasks into the current view, dimmed and sorted last: Today shows what was completed today, Upcoming the last seven days, All and the projects everything. Sort: overdue first, then due time, then priority, then created; undated tasks after dated ones, done tasks last. Recurring tasks show `↻` and a human rule ("weekly", "every 2nd Tuesday"); `d` on one is refused with a one-line hint. Subtasks render indented under their parent when the parent is in the same list, deeper levels further in; a subtask whose parent is not listed is an ordinary row.
+Views, in the order they appear: `Overdue`, `Today` (due today or overdue, all projects), `Upcoming` (today and the next 7 days), `All`, one per project. Today is selected at startup. `c` toggles completed tasks into the current view, dimmed and sorted last: Today shows what was completed today, Upcoming the last seven days, All and the projects everything. Sort: overdue first, then due time, then priority, then created; undated tasks after dated ones, done tasks last. Recurring tasks show `↻` and a human rule ("weekly", "every 2nd Tuesday"); `d` on one is refused with a one-line hint. Subtasks render indented under their parent when the parent is in the same list and pending, deeper levels further in; a subtask whose parent is not listed, or is done, is an ordinary row. Nesting wins over the sort within a list: a child sits under its parent even when its own due date would place it earlier.
 
 Keys, vim-flavored: `j`/`k` move, `g`/`G` first/last, `Tab` switch pane, `Enter` detail (in the projects pane: focus the task list), `J`/`K` scroll the detail, `Esc` back or clear the filter, `a` quick add, `d` done (and reopen), `x` delete (confirm), `u` undo, `e` edit summary, `n` edit notes in `$EDITOR`, `t` due (same date grammar as quick add, empty clears), `p` cycle priority none, high, medium, low, `T` tags, `m` move project (picker), `/` filter, `s` sync, `c` show completed, `?` help, `q` quit. Undo covers add, change, complete, delete and move for the session (last 20); the bar says `(u undo)` after each, and a bar message fades after five seconds or on the next key. Quick add without `@project` uses the project of the current view, else `default_project`, else refuses with a hint; a prompt that fails keeps its text so it can be fixed.
 
@@ -273,7 +273,6 @@ Shipped built-in flavors, selectable by name, all written as ordinary `theme.tom
 
 - `phosphor` (default): near-black bg, green accent, amber for due today, red for overdue, dim gray chrome. The cypherpunk one.
 - `ansi`: the layer-1 terminal palette, for people who theme their terminal once.
-- `mono`: no color, weights and dim only, for tmux over ssh on a bad day.
 
 Implementation notes:
 
@@ -307,8 +306,8 @@ src/
   alarms.rs       fire-time computation (shared by TUI and notify)
   sync.rs         run vdirsyncer, debounce
   notify.rs       husk notify
-  theme.rs        theme files, Base16 mapping, hot reload; only place colors live
-  themes/         embedded flavors: phosphor.toml, ansi.toml, mono.toml
+  theme.rs        theme files, Base16 mapping, dump; only place colors live (hot reload is in ui/mod.rs)
+  themes/         embedded flavors phosphor.toml and ansi.toml, and the base16.toml mapping
   ui/
     app.rs        state machine, key handling
     views.rs        project pane, task list, detail, prompts, popups
