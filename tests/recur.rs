@@ -95,3 +95,54 @@ fn anything_else_is_shown_as_written() {
         "unhandled parts are not silently dropped"
     );
 }
+
+#[test]
+fn several_ordinal_days_are_all_named_and_mixed_forms_are_shown_as_written() {
+    assert_eq!(
+        describe("FREQ=MONTHLY;BYDAY=1MO,3MO"),
+        "every 1st Monday and 3rd Monday"
+    );
+    assert_eq!(
+        describe("FREQ=MONTHLY;BYDAY=2TU,-1FR"),
+        "every 2nd Tuesday and last Friday"
+    );
+    assert_eq!(
+        describe("FREQ=WEEKLY;BYDAY=MO,2TU"),
+        "FREQ=WEEKLY;BYDAY=MO,2TU"
+    );
+    assert_eq!(describe("FREQ=WEEKLY;WKST=MO;BYDAY=MO"), "weekly on Mon");
+}
+
+#[test]
+fn invalid_values_are_shown_as_written() {
+    assert_eq!(describe("FREQ=DAILY;COUNT=0"), "FREQ=DAILY;COUNT=0");
+    assert_eq!(
+        describe("FREQ=MONTHLY;BYMONTHDAY=32"),
+        "FREQ=MONTHLY;BYMONTHDAY=32"
+    );
+    assert_eq!(
+        describe("FREQ=MONTHLY;BYMONTHDAY=-31"),
+        "FREQ=MONTHLY;BYMONTHDAY=-31"
+    );
+    assert_eq!(describe("FREQ=DAILY;INTERVAL=0"), "FREQ=DAILY;INTERVAL=0");
+}
+
+#[test]
+fn a_utc_until_shows_the_local_date_it_falls_on() {
+    use chrono::{Local, TimeZone, Utc};
+    let expected = Utc
+        .with_ymd_and_hms(2026, 12, 31, 23, 0, 0)
+        .unwrap()
+        .with_timezone(&Local)
+        .format("%Y-%m-%d")
+        .to_string();
+    assert_eq!(
+        describe("FREQ=WEEKLY;UNTIL=20261231T230000Z"),
+        format!("weekly until {expected}")
+    );
+    assert_eq!(
+        describe("FREQ=WEEKLY;UNTIL=20261231T230000"),
+        "weekly until 2026-12-31",
+        "floating stays as written"
+    );
+}

@@ -95,11 +95,10 @@ fn main() -> Result<()> {
             let name = config.theme.clone();
             let user_file = Config::theme_file();
             let reload = move || Theme::load(&name, user_file.as_deref());
-            let theme = reload()?;
             let vdir = config.vdir.clone();
             let app = App::new(config, Box::new(store), Local::now())
                 .with_context(|| format!("reading {}", vdir.display()))?;
-            ui::run(app, theme, reload, Config::dir().as_deref())
+            ui::run(app, reload, Config::dir().as_deref())
         }
         Command::Add { text } => {
             let task = cli::add(&store, &config, &text.join(" "), Local::now())?;
@@ -171,6 +170,9 @@ fn main() -> Result<()> {
                 Ok(())
             }
             ThemeAction::Check { file } => {
+                if !file.is_file() {
+                    bail!("{} is not a file", file.display());
+                }
                 Theme::load(&config.theme, Some(&file))
                     .with_context(|| format!("{} does not apply", file.display()))?;
                 println!("{}: ok on top of {}", file.display(), config.theme);

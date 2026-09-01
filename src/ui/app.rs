@@ -226,6 +226,14 @@ impl App {
     /// order: sorted, then each subtask placed right after its parent when
     /// the parent is in the list too.
     pub fn visible_tasks(&self) -> Vec<&Task> {
+        self.visible_with_depth()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect()
+    }
+
+    /// `visible_tasks` with each task's nesting depth, 0 for a top-level row.
+    pub fn visible_with_depth(&self) -> Vec<(&Task, usize)> {
         let view = self.view();
         let mut tasks: Vec<&Task> = self
             .tasks
@@ -288,7 +296,7 @@ impl App {
             && let Some(error) = state.last_error
             && self.message.is_none()
         {
-            self.message = Some(error);
+            self.notify(error);
         }
     }
 
@@ -393,9 +401,9 @@ impl App {
             KeyCode::Char('s') => {
                 if self.sync_enabled() {
                     self.syncer.request();
-                    self.message = Some("Sync requested".to_string());
+                    self.notify("Sync requested".to_string());
                 } else {
-                    self.message = Some("Sync is off: sync_command is empty".to_string());
+                    self.notify("Sync is off: sync_command is empty".to_string());
                 }
             }
             KeyCode::Char('u') => self.undo(),
@@ -509,7 +517,7 @@ impl App {
                 }
                 // The prompt stays open with its text so the mistake can be fixed.
                 Err(e) => {
-                    self.message = Some(format!("{e:#}"));
+                    self.notify(format!("{e:#}"));
                     self.input = Some(input);
                 }
             },
@@ -673,7 +681,7 @@ impl App {
         };
         let (uid, done, recurring) = (task.uid.clone(), task.is_done(), task.is_recurring());
         if !done && recurring {
-            self.message = Some("Recurring tasks are completed on the phone".to_string());
+            self.notify("Recurring tasks are completed on the phone".to_string());
             return;
         }
         let now = self.now.to_utc();
@@ -717,8 +725,10 @@ impl App {
         self.report(result);
     }
 
-    /// The raw `.ics` as saved from `$EDITOR`: parsed, the UID checked, then
-    /// written through the store with a sequence bump like any other edit.
+    /// The raw `.ics` as saved from `$EDITOR`: parsed, checked to hold this
+    /// one task, then written through the store with a sequence bump like
+    /// any other edit, and refused like any other edit when the file changed
+    /// on disk in the meantime.
     pub fn apply_raw(&mut self, uid: &str, text: &str) {
         let result = (|| -> Result<String> {
             let before = self
@@ -727,11 +737,21 @@ impl App {
                 .find(|t| t.uid == uid)
                 .cloned()
                 .with_context(|| format!("task {uid} is no longer listed"))?;
-            let edited = vtodo::parse_task(text, before.project.clone())?;
+            let current = self.store.get(uid)?;
+            if current.raw().root != before.raw().root {
+                self.reload();
+                anyhow::bail!("task {uid} changed on disk since it was read; reload and retry");
+            }
+            let doc = codec::parse(text)?;
+            if doc.root.children().filter(|c| c.is("VTODO")).count() != 1 {
+                anyhow::bail!("the file must hold exactly one VTODO");
+            }
+            let edited = vtodo::from_document(doc, before.project.clone())?;
             if edited.uid != uid {
                 anyhow::bail!("the UID must stay {uid}");
             }
-            if edited.raw() == before.raw() {
+            // Only line endings differing is not an edit.
+            if edited.raw().root == before.raw().root {
                 return Ok(String::new());
             }
             let restored = self.store.restore(&edited)?;
@@ -794,7 +814,7 @@ impl App {
 
     fn undo(&mut self) {
         let Some(entry) = self.undo.pop() else {
-            self.message = Some("Nothing to undo".to_string());
+            self.notify("Nothing to undo".to_string());
             return;
         };
         let result = match entry {
@@ -853,11 +873,16 @@ impl App {
     }
 
     fn report(&mut self, result: Result<String>) {
-        self.message = match result {
-            Ok(text) if text.is_empty() => None,
-            Ok(text) => Some(text),
-            Err(e) => Some(format!("{e:#}")),
-        };
+        match result {
+            Ok(text) if text.is_empty() => self.message = None,
+            Ok(text) => self.notify(text),
+            Err(e) => self.notify(format!("{e:#}")),
+        }
+    }
+
+    /// Shows a message in the bar until the next key or for a few seconds.
+    pub fn notify(&mut self, message: impl Into<String>) {
+        self.message = Some(message.into());
         self.message_at = self.now;
     }
 
@@ -906,18 +931,23 @@ impl App {
     }
 }
 
-/// Places subtasks right after their parents. A task whose parent is not
-/// in the list stays where the sort put it; a parent chain that never
-/// reaches a root (a cycle) falls back to sort order.
-pub fn nest(sorted: Vec<&Task>) -> Vec<&Task> {
-    let uids: HashSet<&str> = sorted.iter().map(|t| t.uid.as_str()).collect();
+/// Places subtasks right after their parents, with their depth. A task
+/// whose parent is not in the list, or is done, stays where the sort put
+/// it at depth 0; a parent chain that never reaches a root (a cycle) falls
+/// back to sort order, also at depth 0.
+pub fn nest(sorted: Vec<&Task>) -> Vec<(&Task, usize)> {
+    let parents: HashSet<&str> = sorted
+        .iter()
+        .filter(|t| !t.is_done())
+        .map(|t| t.uid.as_str())
+        .collect();
     let mut children: HashMap<&str, Vec<&Task>> = HashMap::new();
     let mut roots = Vec::new();
     for task in &sorted {
         match task
             .parent
             .as_deref()
-            .filter(|p| uids.contains(p) && *p != task.uid)
+            .filter(|p| parents.contains(p) && *p != task.uid)
         {
             Some(parent) => children.entry(parent).or_default().push(task),
             None => roots.push(*task),
@@ -926,11 +956,11 @@ pub fn nest(sorted: Vec<&Task>) -> Vec<&Task> {
     let mut out = Vec::with_capacity(sorted.len());
     let mut seen = HashSet::new();
     for root in roots {
-        push_tree(root, &children, &mut out, &mut seen);
+        push_tree(root, 0, &children, &mut out, &mut seen);
     }
     for task in sorted {
         if !seen.contains(task.uid.as_str()) {
-            out.push(task);
+            out.push((task, 0));
         }
     }
     out
@@ -938,33 +968,20 @@ pub fn nest(sorted: Vec<&Task>) -> Vec<&Task> {
 
 fn push_tree<'a>(
     task: &'a Task,
+    depth: usize,
     children: &HashMap<&str, Vec<&'a Task>>,
-    out: &mut Vec<&'a Task>,
+    out: &mut Vec<(&'a Task, usize)>,
     seen: &mut HashSet<&'a str>,
 ) {
     if !seen.insert(task.uid.as_str()) {
         return;
     }
-    out.push(task);
+    out.push((task, depth));
     if let Some(kids) = children.get(task.uid.as_str()) {
         for kid in kids {
-            push_tree(kid, children, out, seen);
+            push_tree(kid, depth + 1, children, out, seen);
         }
     }
-}
-
-/// How many of a task's ancestors are in the list; 0 for a top-level row.
-pub fn depth(task: &Task, listed: &HashMap<&str, &Task>) -> usize {
-    let mut depth = 0;
-    let mut current = task;
-    while let Some(parent) = current.parent.as_deref().and_then(|p| listed.get(p)) {
-        depth += 1;
-        current = parent;
-        if depth > 8 {
-            break;
-        }
-    }
-    depth
 }
 
 fn plain(key: KeyEvent) -> bool {

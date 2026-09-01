@@ -69,6 +69,14 @@ fn list_prints_text_and_json_with_view_and_project_filters() {
     assert_eq!(parent["tags"], serde_json::json!(["Testing"]));
     assert_eq!(parent["due"], "2026-09-01");
     assert_eq!(parent["priority"], "high");
+    let at = rows.iter().position(|r| r["summary"] == "Parent").unwrap();
+    assert_eq!(
+        rows[at + 1]["summary"],
+        "Subtask android",
+        "a subtask follows its parent"
+    );
+    assert_eq!(rows[at + 1]["parent"], "381262659200806456");
+    assert_eq!(parent["parent"], Value::Null);
 
     let (ok, out, _) = husk(
         &s,
@@ -315,6 +323,11 @@ fn theme_dump_and_check_work_with_flavors_and_scheme_files() {
     let (ok, _, err) = husk(&s, &["theme", "check", typo.to_str().unwrap()]);
     assert!(!ok);
     assert!(err.contains("colours"), "{err}");
+
+    let missing = s.dir.path().join("does-not-exist.toml");
+    let (ok, _, err) = husk(&s, &["theme", "check", missing.to_str().unwrap()]);
+    assert!(!ok, "a missing file is not a valid theme");
+    assert!(err.contains("not a file"), "{err}");
 
     let scheme = s.dir.path().join("scheme.yaml");
     let mut yaml = String::from("system: \"base16\"\nname: \"Test\"\npalette:\n");

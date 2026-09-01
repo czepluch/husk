@@ -19,14 +19,10 @@ use ratatui::DefaultTerminal;
 use crate::theme::Theme;
 use app::App;
 
-/// Runs the TUI. `reload` re-reads the theme; it is called whenever a file
-/// under `watch` changes, so a theme can be edited while husk runs.
-pub fn run(
-    mut app: App,
-    theme: Theme,
-    reload: impl Fn() -> Result<Theme>,
-    watch: Option<&Path>,
-) -> Result<()> {
+/// Runs the TUI. `reload` reads the theme, once at start and again whenever
+/// a file under `watch` changes, so a theme can be edited while husk runs.
+pub fn run(mut app: App, reload: impl Fn() -> Result<Theme>, watch: Option<&Path>) -> Result<()> {
+    let theme = reload()?;
     let (tx, changes) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |_: notify::Result<notify::Event>| {
         let _ = tx.send(());
@@ -57,13 +53,7 @@ fn event_loop(
     while !app.quit {
         if changes.try_recv().is_ok() {
             while changes.try_recv().is_ok() {}
-            match reload() {
-                Ok(fresh) => {
-                    theme = fresh;
-                    app.message = Some("Theme reloaded".to_string());
-                }
-                Err(e) => app.message = Some(format!("theme: {e:#}")),
-            }
+            apply_reload(app, &mut theme, reload());
         }
         terminal.draw(|frame| views::draw(frame, app, &theme))?;
         if event::poll(Duration::from_millis(500))?
@@ -74,13 +64,14 @@ fn event_loop(
         }
         if let Some(request) = app.take_editor_request() {
             ratatui::restore();
-            let edited = edit_with_editor(&request.text);
+            let extension = if request.raw { "ics" } else { "md" };
+            let edited = edit_with_editor(&request.text, extension);
             *terminal = ratatui::init();
             terminal.clear()?;
             match (edited, request.raw) {
                 (Ok(text), true) => app.apply_raw(&request.uid, &text),
                 (Ok(text), false) => app.apply_notes(&request.uid, &text),
-                (Err(e), _) => app.message = Some(format!("{e:#}")),
+                (Err(e), _) => app.notify(format!("{e:#}")),
             }
         }
         app.now = Local::now();
@@ -89,22 +80,35 @@ fn event_loop(
     Ok(())
 }
 
+/// A freshly read theme replaces the current one; a theme that failed to
+/// load leaves the current one in place and puts the reason in the bar.
+pub fn apply_reload(app: &mut App, theme: &mut Theme, fresh: Result<Theme>) {
+    match fresh {
+        Ok(fresh) => {
+            *theme = fresh;
+            app.notify("Theme reloaded");
+        }
+        Err(e) => app.notify(format!("theme: {e:#}")),
+    }
+}
+
 /// Opens `$VISUAL` or `$EDITOR` on a temp file holding `text` and returns
 /// what was saved. The terminal must be restored before calling this.
-pub fn edit_with_editor(text: &str) -> Result<String> {
+pub fn edit_with_editor(text: &str, extension: &str) -> Result<String> {
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .ok()
         .filter(|e| !e.trim().is_empty());
     let Some(editor) = editor else {
-        bail!("set $EDITOR (or $VISUAL) to edit notes");
+        bail!("set $EDITOR (or $VISUAL) to edit");
     };
-    edit_with(&editor, text)
+    edit_with(&editor, text, extension)
 }
 
-/// Runs one editor command on a temp file holding `text`.
-pub fn edit_with(editor: &str, text: &str) -> Result<String> {
-    let path = std::env::temp_dir().join(format!("husk-notes-{}.md", std::process::id()));
+/// Runs one editor command on a temp file holding `text`; the extension
+/// lets the editor pick its mode.
+pub fn edit_with(editor: &str, text: &str, extension: &str) -> Result<String> {
+    let path = std::env::temp_dir().join(format!("husk-edit-{}.{extension}", std::process::id()));
     write_private(&path, text).with_context(|| format!("write {}", path.display()))?;
     // Through the shell so an editor setting with arguments ("code --wait") works.
     let status = Command::new("sh")
@@ -118,7 +122,7 @@ pub fn edit_with(editor: &str, text: &str) -> Result<String> {
         std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))
     } else {
         Err(anyhow::anyhow!(
-            "{editor} exited with {status}; notes unchanged"
+            "{editor} exited with {status}; nothing changed"
         ))
     };
     let _ = std::fs::remove_file(&path);

@@ -4,6 +4,8 @@
 
 use std::fmt::Write;
 
+use chrono::{Local, NaiveDateTime};
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Freq {
     Daily,
@@ -70,10 +72,17 @@ fn text(rule: &str) -> Option<String> {
                     days.push(parse_day(token)?);
                 }
             }
-            "BYMONTHDAY" => month_day = Some(value.parse().ok().filter(|n| *n != 0)?),
+            "BYMONTHDAY" => {
+                month_day = Some(
+                    value
+                        .parse()
+                        .ok()
+                        .filter(|n: &i32| *n != 0 && n.abs() <= 31)?,
+                );
+            }
             "BYMONTH" => month = Some(value.parse().ok().filter(|n| (1..=12).contains(n))?),
             "UNTIL" => until = Some(format_until(value)?),
-            "COUNT" => count = Some(value.parse().ok()?),
+            "COUNT" => count = Some(value.parse().ok().filter(|n| *n > 0)?),
             "WKST" => {}
             _ => return None,
         }
@@ -81,10 +90,18 @@ fn text(rule: &str) -> Option<String> {
     let freq = freq?;
 
     let mut out = String::new();
-    let ordinal_day = days.iter().find(|d| d.ordinal.is_some());
-    if let Some(day) = ordinal_day {
-        // "every 2nd Tuesday", the shape people say out loud.
-        write!(out, "every {} {}", ordinal_text(day.ordinal?), day.long).ok()?;
+    let with_ordinal = days.iter().filter(|d| d.ordinal.is_some()).count();
+    if with_ordinal > 0 {
+        // "every 2nd Tuesday", the shape people say out loud; a mix of
+        // ordinal and plain days has no such shape and is shown as written.
+        if with_ordinal != days.len() {
+            return None;
+        }
+        let named: Vec<String> = days
+            .iter()
+            .filter_map(|d| Some(format!("{} {}", ordinal_text(d.ordinal?), d.long)))
+            .collect();
+        write!(out, "every {}", named.join(" and ")).ok()?;
         if interval > 1 {
             write!(out, " every {interval} {}s", freq.unit()).ok()?;
         }
@@ -93,7 +110,7 @@ fn text(rule: &str) -> Option<String> {
     } else {
         out.push_str(freq.plain());
     }
-    if ordinal_day.is_none() && !days.is_empty() {
+    if with_ordinal == 0 && !days.is_empty() {
         let names: Vec<&str> = days.iter().map(|d| d.short).collect();
         write!(out, " on {}", names.join(", ")).ok()?;
     }
@@ -172,8 +189,19 @@ fn month_name(m: u32) -> Option<&'static str> {
     .copied()
 }
 
-/// `20260930` or `20260930T215959Z` as `2026-09-30`.
+/// `20260930` or `20260930T215959Z` as `2026-09-30`; a UTC time is shown
+/// as the local date it falls on.
 fn format_until(value: &str) -> Option<String> {
+    if let Some(utc) = value.strip_suffix('Z')
+        && let Ok(at) = NaiveDateTime::parse_from_str(utc, "%Y%m%dT%H%M%S")
+    {
+        return Some(
+            at.and_utc()
+                .with_timezone(&Local)
+                .format("%Y-%m-%d")
+                .to_string(),
+        );
+    }
     let date = value.get(..8)?;
     if !date.bytes().all(|b| b.is_ascii_digit()) {
         return None;

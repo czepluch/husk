@@ -8,10 +8,8 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use std::collections::HashMap;
-
 use super::app::{
-    App, Bucket, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text, bucket, depth, due_detail,
+    App, Bucket, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text, bucket, due_detail,
     due_label, stamp,
 };
 use crate::model::{Priority, Status, Task};
@@ -158,11 +156,10 @@ fn draw_tasks(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         .max()
         .unwrap_or(5)
         .clamp(5, 20);
-    let listed: HashMap<&str, &Task> = tasks.iter().map(|t| (t.uid.as_str(), *t)).collect();
-    let items: Vec<ListItem> = tasks
-        .iter()
-        .map(|task| {
-            let depth = depth(task, &listed);
+    let items: Vec<ListItem> = app
+        .visible_with_depth()
+        .into_iter()
+        .map(|(task, depth)| {
             ListItem::new(task_item(task, app, theme, area.width, label_width, depth))
         })
         .collect();

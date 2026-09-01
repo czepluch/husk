@@ -48,7 +48,7 @@ pub fn rows(
     picked.sort_by_cached_key(|t| sort_key(t, now));
     nest(picked)
         .into_iter()
-        .map(|task| Row {
+        .map(|(task, _)| Row {
             uid: task.uid.clone(),
             summary: task.summary.clone(),
             project: project_name(projects, &task.project),

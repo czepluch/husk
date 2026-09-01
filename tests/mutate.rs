@@ -474,7 +474,11 @@ fn edit_with_runs_the_editor_on_a_temp_file() {
     fs::set_permissions(&script, perms).unwrap();
     let editor = format!("{} --flag", script.display());
     assert_eq!(
-        ui::edit_with(&editor, "start\n").unwrap(),
+        ui::edit_with(
+            &editor, "start
+", "md"
+        )
+        .unwrap(),
         "start\nfrom script\n"
     );
 
@@ -483,7 +487,7 @@ fn edit_with_runs_the_editor_on_a_temp_file() {
     let mut perms = fs::metadata(&failing).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
     fs::set_permissions(&failing, perms).unwrap();
-    let err = ui::edit_with(&failing.display().to_string(), "x").unwrap_err();
+    let err = ui::edit_with(&failing.display().to_string(), "x", "ics").unwrap_err();
     assert!(err.to_string().contains("exited"), "{err}");
 }
 
@@ -894,4 +898,81 @@ fn o_edits_the_raw_file_through_the_store() {
 
     s.app.handle_key(key('u'));
     assert!(file(&s, "life/no-due.ics").contains("SUMMARY:Test task\n"));
+}
+
+#[test]
+fn o_refuses_a_file_that_changed_on_disk_or_holds_more_than_one_task() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('o'));
+    let request = s.app.take_editor_request().unwrap();
+    let path = s.dir.path().join("life/no-due.ics");
+    let phone = fs::read_to_string(&path)
+        .unwrap()
+        .replace("SUMMARY:Test task", "SUMMARY:Phone rename\nSEQUENCE:3");
+    fs::write(&path, &phone).unwrap();
+    s.app.apply_raw(
+        TEST_TASK,
+        &request
+            .text
+            .replace("SUMMARY:Test task", "SUMMARY:Laptop edit"),
+    );
+    assert!(
+        s.app
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("changed on disk"),
+        "{:?}",
+        s.app.message
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        phone,
+        "the phone's version survives"
+    );
+    assert!(
+        s.app.tasks.iter().any(|t| t.summary == "Phone rename"),
+        "reloaded"
+    );
+
+    s.app.handle_key(key('o'));
+    let request = s.app.take_editor_request().unwrap();
+    let two = request.text.replace(
+        "END:VCALENDAR",
+        "BEGIN:VTODO\nUID:other\nSUMMARY:Smuggled\nEND:VTODO\nEND:VCALENDAR",
+    );
+    s.app.apply_raw(TEST_TASK, &two);
+    assert!(
+        s.app
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("exactly one VTODO"),
+        "{:?}",
+        s.app.message
+    );
+    assert!(!fs::read_to_string(&path).unwrap().contains("Smuggled"));
+
+    let crlf = request.text.replace('\n', "\r\n");
+    s.app.apply_raw(TEST_TASK, &crlf);
+    assert_eq!(s.app.message, None, "line endings alone are not an edit");
+    assert_eq!(fs::read_to_string(&path).unwrap(), phone);
+}
+
+#[test]
+fn messages_set_from_outside_a_key_press_still_fade_correctly() {
+    use chrono::TimeDelta;
+    let mut s = sample();
+    s.app.now += TimeDelta::seconds(30);
+    s.app.notify("theme: broken");
+    s.app.poll();
+    assert_eq!(
+        s.app.message.as_deref(),
+        Some("theme: broken"),
+        "fresh messages stay"
+    );
+    s.app.now += TimeDelta::seconds(6);
+    s.app.poll();
+    assert_eq!(s.app.message, None);
 }

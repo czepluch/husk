@@ -1,6 +1,7 @@
 //! Runs the sync command in a background thread: after every write,
 //! debounced so a burst of edits becomes one run, and on demand from `s`.
 
+use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -121,7 +122,15 @@ pub fn run_discover(command: &[String]) -> Result<(), String> {
             .status()
             .map_err(|e| format!("{program} {verb}: {e}"))?;
         if !status.success() {
-            return Err(format!("{program} {verb} failed with {status}"));
+            let hint = if Path::new(program)
+                .file_name()
+                .is_some_and(|n| n == "vdirsyncer")
+            {
+                ""
+            } else {
+                "; --discover runs vdirsyncer's discover and metasync verbs"
+            };
+            return Err(format!("{program} {verb} failed with {status}{hint}"));
         }
     }
     let status = Command::new(program)

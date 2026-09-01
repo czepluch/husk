@@ -293,7 +293,7 @@ fn color_name(color: Color) -> String {
 /// `#`). Only the palette is read; everything else in the file is ignored.
 pub fn parse_scheme(text: &str) -> Result<BTreeMap<String, String>> {
     let mut palette = BTreeMap::new();
-    for line in text.lines() {
+    for line in text.trim_start_matches('\u{feff}').lines() {
         let line = line.trim();
         if line.starts_with('#') {
             continue;
@@ -305,7 +305,12 @@ pub fn parse_scheme(text: &str) -> Result<BTreeMap<String, String>> {
         if key.len() != 6 || !key.starts_with("base") {
             continue;
         }
-        let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
+        // Quoted or bare, with or without a trailing comment.
+        let raw = value.trim();
+        let value = match raw.chars().next() {
+            Some(quote @ ('"' | '\'')) => raw[1..].split(quote).next().unwrap_or(""),
+            _ => raw.split_whitespace().next().unwrap_or(""),
+        };
         let hex = value.trim_start_matches('#');
         if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             bail!("{key}: {value:?} is not a hex color");
@@ -381,9 +386,6 @@ impl ThemeFile {
         s.subtask = o.subtask.or(s.subtask.take());
         s.alarm = o.alarm.or(s.alarm.take());
         self.borders.style = over.borders.style.or(self.borders.style.take());
-        if !over.palette.is_empty() {
-            self.palette = over.palette;
-        }
     }
 
     pub fn resolve(&self) -> Result<Theme> {
@@ -699,6 +701,42 @@ mod tests {
         let err = Theme::load("phosphor", Some(&user)).unwrap_err();
         assert!(format!("{err:#}").contains("no scheme file"), "{err:#}");
         assert!(Theme::load(dir.join("missing.yaml").to_str().unwrap(), None).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scheme_files_tolerate_real_world_quirks() {
+        let quirky = "\u{feff}# A comment line\r\nsystem: base24\r\npalette:\r\n  base00: '#1d2021' # background\r\n  base01: 3c3836\r\n  base02: \"#504945\"\r\n  base03: \"665c54\"\r\n  base04: bdae93\r\n  base05: d5c4a1\r\n  base06: ebdbb2\r\n  base07: fbf1c7\r\n  base08: fb4934\r\n  base09: fe8019\r\n  base0A: fabd2f\r\n  base0B: b8bb26\r\n  base0C: 8ec07c\r\n  base0D: 83a598\r\n  base0E: d3869b\r\n  base0F: d65d0e\r\n  base10: 000000\r\n  base17: ffffff\r\n";
+        let palette = parse_scheme(quirky).unwrap();
+        assert_eq!(
+            palette["base00"], "1d2021",
+            "quoted with a trailing comment"
+        );
+        assert_eq!(palette["base01"], "3c3836", "bare");
+        assert_eq!(palette["base17"], "ffffff", "Base24 slots come along");
+        assert!(parse_scheme("name: x\n").is_err(), "not a scheme");
+    }
+
+    #[test]
+    fn a_scheme_with_overrides_dumps_and_reloads_identically() {
+        let dir = std::env::temp_dir().join(format!("husk-dump-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let scheme = dir.join("s.yaml");
+        std::fs::write(&scheme, NEW_SCHEME).unwrap();
+        let user = dir.join("theme.toml");
+        std::fs::write(
+            &user,
+            "[colors]\nfg = \"default\"\nmuted = \"bright_black\"\ntag = \"208\"\n[styles]\ntitle = { fg = \"base09\", italic = true, underline = true }\n[symbols]\nset = \"ascii\"\n[borders]\nstyle = \"none\"\n",
+        )
+        .unwrap();
+        let theme = Theme::load(scheme.to_str().unwrap(), Some(&user)).unwrap();
+        let text = theme.dump().unwrap();
+        let again = ThemeFile::parse(&text).unwrap().resolve().unwrap();
+        assert_eq!(again, theme, "{text}");
+        assert!(
+            text.contains("style = \"none\"") && text.contains("tag = \"208\""),
+            "{text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -11,7 +11,7 @@ use husk::model::{Due, ProjectId, Task};
 use husk::store::VdirStore;
 use husk::theme::Theme;
 use husk::ui::app::{self, App, Bucket, Mode, Pane, View};
-use husk::ui::views;
+use husk::ui::{self, views};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
@@ -964,4 +964,70 @@ fn projects_wear_the_color_from_their_vdir_color_file() {
         theme.project.fg,
         "an unreadable color falls back"
     );
+}
+
+#[test]
+fn cycles_render_flat_and_a_done_parent_does_not_nest() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let tasks = vec![
+        task("loop-a", "Loop A", "p", None, "RELATED-TO:loop-b\r\n"),
+        task("loop-b", "Loop B", "p", None, "RELATED-TO:loop-a\r\n"),
+        task("self", "Self parent", "p", None, "RELATED-TO:self\r\n"),
+        task("plain", "Plain", "p", None, ""),
+        task(
+            "done-parent",
+            "Finished parent",
+            "p",
+            None,
+            "STATUS:COMPLETED\r\nCOMPLETED:20260831T101451Z\r\n",
+        ),
+        task(
+            "kid",
+            "Kid of finished",
+            "p",
+            Some("DUE;VALUE=DATE:20260810"),
+            "RELATED-TO:done-parent\r\n",
+        ),
+    ];
+    let mut s = make(&[], tasks);
+    let app = &mut s.app;
+    app.view_index = 3;
+    app.show_done = true;
+    assert_eq!(
+        uids(app),
+        vec!["kid", "plain", "self", "done-parent", "loop-a", "loop-b"],
+        "overdue first, done last, no nesting under a done parent, cycles at the end"
+    );
+    let depths: Vec<usize> = app.visible_with_depth().iter().map(|(_, d)| *d).collect();
+    assert_eq!(depths, vec![0; 6]);
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 14)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
+    let text = screen(&terminal);
+    let col = |needle: &str| {
+        let line = text.lines().find(|l| l.contains(needle)).unwrap();
+        line[..line.find(needle).unwrap()].chars().count()
+    };
+    assert_eq!(col("Loop A"), col("Plain"), "{text}");
+    assert_eq!(col("Self parent"), col("Plain"), "{text}");
+    assert!(
+        !text.contains("└ "),
+        "no subtask glyph, only the border corner:\n{text}"
+    );
+}
+
+#[test]
+fn a_failed_theme_reload_keeps_the_theme_and_says_why() {
+    let mut s = sample();
+    let app = &mut s.app;
+    let mut theme = Theme::load("phosphor", None).unwrap();
+    let phosphor = theme.clone();
+    ui::apply_reload(app, &mut theme, Err(anyhow::anyhow!("boom")));
+    assert_eq!(theme, phosphor);
+    assert_eq!(app.message.as_deref(), Some("theme: boom"));
+    app.poll();
+    assert!(app.message.is_some(), "the reason stays visible");
+    ui::apply_reload(app, &mut theme, Theme::load("ansi", None));
+    assert_ne!(theme, phosphor);
+    assert_eq!(app.message.as_deref(), Some("Theme reloaded"));
 }
