@@ -106,10 +106,7 @@ pub fn plan(
     config: &Config,
     nag: bool,
 ) -> (Vec<Notice>, State) {
-    // On the very first run nothing has "come due since", so nothing fires.
-    let since = state.last_run.map_or(now, |last| {
-        last.min(now - TimeDelta::minutes(GRACE_MINUTES))
-    });
+    let since = window_start(state, now);
     let cutoff = now - TimeDelta::days(KEEP_DAYS);
     let mut fired: Vec<Fired> = state
         .fired
@@ -156,6 +153,13 @@ pub fn plan(
         fired,
     };
     (notices, state)
+}
+
+/// The last run or the start of the grace window, whichever is earlier;
+/// on the very first run, just the grace window.
+pub fn window_start(state: &State, now: DateTime<Utc>) -> DateTime<Utc> {
+    let grace = now - TimeDelta::minutes(GRACE_MINUTES);
+    state.last_run.map_or(grace, |last| last.min(grace))
 }
 
 fn at_or_past_due(due: Option<Due>, at: DateTime<Utc>) -> bool {
@@ -234,13 +238,20 @@ pub fn run_with(
     let state = State::load(path)?;
     let (notices, mut next) = plan(tasks, projects, &state, now, config, nag);
     if dry_run {
+        let format = |at: DateTime<Utc>| at.with_timezone(&Local).format("%Y-%m-%d %H:%M");
+        println!(
+            "Alarms after {} up to {} (last run: {})",
+            format(window_start(&state, now)),
+            format(now),
+            state
+                .last_run
+                .map_or("never".to_string(), |at| format(at).to_string())
+        );
         for notice in &notices {
-            println!(
-                "{}  {}  {}",
-                notice.at.with_timezone(&Local).format("%Y-%m-%d %H:%M"),
-                notice.title,
-                notice.body
-            );
+            println!("{}  {}  {}", format(notice.at), notice.title, notice.body);
+        }
+        if notices.is_empty() {
+            println!("nothing to notify");
         }
         return Ok(notices.len());
     }

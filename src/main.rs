@@ -141,11 +141,7 @@ fn main() -> Result<()> {
             };
             let tasks = store.tasks(None)?;
             let projects = store.projects()?;
-            let shown =
-                husk::notify::run(&tasks, &projects, &path, Utc::now(), &config, nag, dry_run)?;
-            if dry_run && shown == 0 {
-                println!("nothing to notify");
-            }
+            husk::notify::run(&tasks, &projects, &path, Utc::now(), &config, nag, dry_run)?;
             Ok(())
         }
         Command::Sync => {

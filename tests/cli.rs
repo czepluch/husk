@@ -170,7 +170,12 @@ fn notify_dry_run_lists_what_would_fire_and_writes_nothing() {
     let path = state.to_str().unwrap();
     let (ok, out, err) = husk(&s, &["notify", "--dry-run", "--state", path]);
     assert!(ok, "{err}");
-    assert_eq!(out.trim(), "nothing to notify", "first run");
+    assert!(out.starts_with("Alarms after "), "{out}");
+    assert!(out.contains("(last run: never)"), "{out}");
+    assert!(
+        out.trim_end().ends_with("nothing to notify"),
+        "first run, fixtures are old:\n{out}"
+    );
     assert!(!state.exists(), "a dry run writes no state");
 
     fs::create_dir_all(state.parent().unwrap()).unwrap();

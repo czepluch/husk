@@ -48,7 +48,7 @@ fn state_at(last_run: DateTime<Utc>) -> State {
 }
 
 #[test]
-fn the_first_run_fires_nothing_and_records_the_time() {
+fn the_first_run_covers_only_the_grace_window_and_records_the_time() {
     let now = utc(2026, 8, 31, 12, 0, 0);
     let (notices, state) = plan(
         &tasks(),
@@ -58,9 +58,27 @@ fn the_first_run_fires_nothing_and_records_the_time() {
         &Config::default(),
         false,
     );
-    assert!(notices.is_empty());
+    assert!(
+        notices.is_empty(),
+        "the 10:25 alarm is older than the window"
+    );
     assert_eq!(state.last_run, Some(now));
     assert!(state.fired.is_empty());
+
+    let soon_after = utc(2026, 8, 31, 10, 30, 0);
+    let (notices, _) = plan(
+        &tasks(),
+        &projects(),
+        &State::default(),
+        soon_after,
+        &Config::default(),
+        false,
+    );
+    assert_eq!(
+        titles(&notices),
+        vec!["Remember the milk"],
+        "five minutes old fires on a first run"
+    );
 }
 
 #[test]
