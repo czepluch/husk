@@ -892,19 +892,15 @@ pub fn due_input(due: Option<Due>, _config: &Config) -> String {
 
 pub fn bucket(due: Option<Due>, now: DateTime<Local>) -> Bucket {
     let today = now.date_naive();
+    if crate::alarms::is_overdue(due, now.to_utc()) {
+        return Bucket::Overdue;
+    }
     let date = match due {
         None => return Bucket::None,
         Some(Due::Date(date)) => date,
-        Some(Due::DateTime(at)) => {
-            if at < now.to_utc() {
-                return Bucket::Overdue;
-            }
-            at.with_timezone(&Local).date_naive()
-        }
+        Some(Due::DateTime(at)) => at.with_timezone(&Local).date_naive(),
     };
-    if date < today {
-        Bucket::Overdue
-    } else if date == today {
+    if date == today {
         Bucket::Today
     } else if date <= today + TimeDelta::days(7) {
         Bucket::Soon
