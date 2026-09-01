@@ -216,7 +216,7 @@ Book dentist due:tomorrow 09:00 pri:H +health @personal
 
 Same grammar drives `husk add`, so you can bind a Hyprland key to `fuzzel --dmenu | xargs husk add` for capture without opening the TUI.
 
-Detail view shows every field including alarms and raw RRULE. `o`, opening the raw `.ics` in `$EDITOR` as an escape hatch, comes with M5 and goes through the store like every other write.
+Detail view shows every field including alarms and raw RRULE. `o` opens the raw `.ics` in `$EDITOR` as an escape hatch; the result must parse and keep the UID, and is written through the store with a `SEQUENCE` bump like any other edit, so it is undoable and syncs.
 
 ## 7b. Theming
 

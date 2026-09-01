@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use husk::config::Config;
 use husk::store::VdirStore;
 use husk::theme::Theme;
-use husk::ui::app::{App, Mode};
+use husk::ui::app::{App, EditorRequest, Mode};
 use husk::ui::{self, views};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -436,7 +436,11 @@ fn notes_go_through_the_editor_request_and_apply_notes() {
     s.app.handle_key(key('n'));
     assert_eq!(
         s.app.take_editor_request(),
-        Some((TEST_TASK.to_string(), String::new()))
+        Some(EditorRequest {
+            uid: TEST_TASK.to_string(),
+            text: String::new(),
+            raw: false
+        })
     );
     assert_eq!(s.app.take_editor_request(), None, "taken once");
 
@@ -448,7 +452,7 @@ fn notes_go_through_the_editor_request_and_apply_notes() {
     assert!(file(&s, "life/no-due.ics").contains("DESCRIPTION:line one\\nline two\n"));
     s.app.handle_key(key('n'));
     assert_eq!(
-        s.app.take_editor_request().unwrap().1,
+        s.app.take_editor_request().unwrap().text,
         "line one\nline two",
         "the editor starts from the current notes"
     );
@@ -838,4 +842,56 @@ fn messages_fade_after_five_seconds_or_on_a_key() {
     assert!(s.app.message.is_some());
     s.app.handle_key(key('j'));
     assert_eq!(s.app.message, None, "any key clears it");
+}
+
+#[test]
+fn o_edits_the_raw_file_through_the_store() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('o'));
+    let request = s.app.take_editor_request().unwrap();
+    assert!(request.raw);
+    assert_eq!(request.text, file(&s, "life/no-due.ics"));
+
+    let edited = request
+        .text
+        .replace("SUMMARY:Test task", "SUMMARY:Hand edited\nX-HUSK-NOTE:kept");
+    s.app.apply_raw(TEST_TASK, &edited);
+    assert_eq!(
+        s.app.message.as_deref(),
+        Some("File saved: Hand edited (u undo)")
+    );
+    let text = file(&s, "life/no-due.ics");
+    assert!(text.contains("SUMMARY:Hand edited\n"), "{text}");
+    assert!(
+        text.contains("X-HUSK-NOTE:kept\n"),
+        "unknown properties pass through:\n{text}"
+    );
+    assert!(
+        text.contains("SEQUENCE:1\n"),
+        "a raw edit is still a rewrite:\n{text}"
+    );
+
+    let before = text.clone();
+    s.app
+        .apply_raw(TEST_TASK, &request.text.replace(TEST_TASK, "someone-else"));
+    assert!(
+        s.app.message.as_deref().unwrap().contains("UID must stay"),
+        "{:?}",
+        s.app.message
+    );
+    s.app.apply_raw(TEST_TASK, "BEGIN:VCALENDAR\nnot really\n");
+    assert!(s.app.message.is_some());
+    assert_eq!(
+        file(&s, "life/no-due.ics"),
+        before,
+        "refused edits change nothing"
+    );
+
+    s.app.apply_raw(TEST_TASK, &before);
+    assert_eq!(s.app.message, None, "an unchanged file is a no-op");
+    assert_eq!(file(&s, "life/no-due.ics"), before);
+
+    s.app.handle_key(key('u'));
+    assert!(file(&s, "life/no-due.ics").contains("SUMMARY:Test task\n"));
 }

@@ -12,6 +12,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::alarms::default_alarms;
 use crate::config::Config;
+use crate::ical::{codec, vtodo};
 use crate::model::{Alarm, Anchor, Due, NewTask, Priority, Project, ProjectId, Task};
 use crate::quickadd;
 use crate::store::Store;
@@ -82,6 +83,15 @@ pub struct Input {
     pub uid: Option<String>,
 }
 
+/// Text the run loop should open in `$EDITOR`, and what to do with it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditorRequest {
+    pub uid: String,
+    pub text: String,
+    /// The whole `.ics` file rather than the notes.
+    pub raw: bool,
+}
+
 enum Undo {
     /// The task as it was before a change or a delete.
     Restore(Box<Task>),
@@ -122,7 +132,7 @@ pub struct App {
     pub message: Option<String>,
     message_at: DateTime<Local>,
     undo: Vec<Undo>,
-    editor_request: Option<(String, String)>,
+    editor_request: Option<EditorRequest>,
     seen_runs: u64,
     /// The store's change stamp at the last reload.
     stamp: u64,
@@ -291,8 +301,8 @@ impl App {
         self.syncer.flush(timeout)
     }
 
-    /// The notes edit the run loop should perform, if any: UID and current text.
-    pub fn take_editor_request(&mut self) -> Option<(String, String)> {
+    /// The editor session the run loop should perform, if any.
+    pub fn take_editor_request(&mut self) -> Option<EditorRequest> {
         self.editor_request.take()
     }
 
@@ -433,10 +443,20 @@ impl App {
             }
             KeyCode::Char('n') => {
                 if let Some(task) = self.selected_task() {
-                    self.editor_request = Some((
-                        task.uid.clone(),
-                        task.description.clone().unwrap_or_default(),
-                    ));
+                    self.editor_request = Some(EditorRequest {
+                        uid: task.uid.clone(),
+                        text: task.description.clone().unwrap_or_default(),
+                        raw: false,
+                    });
+                }
+            }
+            KeyCode::Char('o') => {
+                if let Some(task) = self.selected_task() {
+                    self.editor_request = Some(EditorRequest {
+                        uid: task.uid.clone(),
+                        text: codec::serialize(task.raw()),
+                        raw: true,
+                    });
                 }
             }
             _ => {}
@@ -694,6 +714,31 @@ impl App {
             task.description = if notes.is_empty() { None } else { Some(notes) };
             Ok(())
         });
+        self.report(result);
+    }
+
+    /// The raw `.ics` as saved from `$EDITOR`: parsed, the UID checked, then
+    /// written through the store with a sequence bump like any other edit.
+    pub fn apply_raw(&mut self, uid: &str, text: &str) {
+        let result = (|| -> Result<String> {
+            let before = self
+                .tasks
+                .iter()
+                .find(|t| t.uid == uid)
+                .cloned()
+                .with_context(|| format!("task {uid} is no longer listed"))?;
+            let edited = vtodo::parse_task(text, before.project.clone())?;
+            if edited.uid != uid {
+                anyhow::bail!("the UID must stay {uid}");
+            }
+            if edited.raw() == before.raw() {
+                return Ok(String::new());
+            }
+            let restored = self.store.restore(&edited)?;
+            self.push_undo(Undo::Restore(Box::new(before)));
+            self.after_write(Some(uid));
+            Ok(format!("File saved: {} (u undo)", restored.summary))
+        })();
         self.report(result);
     }
 

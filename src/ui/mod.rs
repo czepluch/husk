@@ -37,14 +37,15 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, theme: &Theme) -> R
         {
             app.handle_key(key);
         }
-        if let Some((uid, text)) = app.take_editor_request() {
+        if let Some(request) = app.take_editor_request() {
             ratatui::restore();
-            let edited = edit_with_editor(&text);
+            let edited = edit_with_editor(&request.text);
             *terminal = ratatui::init();
             terminal.clear()?;
-            match edited {
-                Ok(new_text) => app.apply_notes(&uid, &new_text),
-                Err(e) => app.message = Some(format!("{e:#}")),
+            match (edited, request.raw) {
+                (Ok(text), true) => app.apply_raw(&request.uid, &text),
+                (Ok(text), false) => app.apply_notes(&request.uid, &text),
+                (Err(e), _) => app.message = Some(format!("{e:#}")),
             }
         }
         app.now = Local::now();
