@@ -109,6 +109,32 @@ fn worker(rx: &Receiver<()>, command: &[String], state: &Mutex<SyncState>, pendi
     }
 }
 
+/// `discover` and `metasync` with the sync command's program (a list made
+/// on a phone needs both before `sync` sees it), then the sync command,
+/// all with the terminal attached so discover can ask about creating
+/// collections.
+pub fn run_discover(command: &[String]) -> Result<(), String> {
+    let (program, args) = command.split_first().ok_or("no sync command")?;
+    for verb in ["discover", "metasync"] {
+        let status = Command::new(program)
+            .arg(verb)
+            .status()
+            .map_err(|e| format!("{program} {verb}: {e}"))?;
+        if !status.success() {
+            return Err(format!("{program} {verb} failed with {status}"));
+        }
+    }
+    let status = Command::new(program)
+        .args(args)
+        .status()
+        .map_err(|e| format!("{program}: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{program} failed with {status}"))
+    }
+}
+
 /// Runs the sync command once, in the foreground.
 pub fn run(command: &[String]) -> Result<(), String> {
     let (program, args) = command.split_first().ok_or("no sync command")?;

@@ -55,7 +55,11 @@ enum Command {
         state: Option<PathBuf>,
     },
     /// Run the sync command now
-    Sync,
+    Sync {
+        /// First discover new lists and their names (vdirsyncer discover, metasync)
+        #[arg(long)]
+        discover: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -144,11 +148,16 @@ fn main() -> Result<()> {
             husk::notify::run(&tasks, &projects, &path, Utc::now(), &config, nag, dry_run)?;
             Ok(())
         }
-        Command::Sync => {
+        Command::Sync { discover } => {
             if config.sync_command.is_empty() {
                 bail!("sync_command is empty in the config");
             }
-            sync::run(&config.sync_command).map_err(|e| anyhow::anyhow!(e))
+            let outcome = if discover {
+                sync::run_discover(&config.sync_command)
+            } else {
+                sync::run(&config.sync_command)
+            };
+            outcome.map_err(|e| anyhow::anyhow!(e))
         }
     }
 }

@@ -245,3 +245,41 @@ fn add_reports_a_failed_sync_but_keeps_the_task() {
                 .contains("SUMMARY:Survives the sync"))
     );
 }
+
+#[test]
+fn sync_discover_runs_discover_metasync_then_sync() {
+    let dir = common::TempDir::new();
+    let log = dir.path().join("log");
+    let script = dir.path().join("fake-vdirsyncer");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> {}\n[ \"$1\" = discover ] && [ -e {} ] && exit 1\nexit 0\n",
+            log.display(),
+            dir.path().join("fail").display()
+        ),
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&script).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    fs::set_permissions(&script, perms).unwrap();
+    let s = setup(&format!("\"{}\", \"sync\", \"--extra\"", script.display()));
+
+    let (ok, _, err) = husk(&s, &["sync", "--discover"]);
+    assert!(ok, "{err}");
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "discover\nmetasync\nsync --extra\n"
+    );
+
+    fs::write(dir.path().join("fail"), "").unwrap();
+    fs::remove_file(&log).unwrap();
+    let (ok, _, err) = husk(&s, &["sync", "--discover"]);
+    assert!(!ok);
+    assert!(err.contains("discover failed"), "{err}");
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "discover\n",
+        "nothing runs after a failed discover"
+    );
+}
