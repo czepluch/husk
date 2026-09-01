@@ -340,6 +340,8 @@ M4, one evening: `husk notify`, state file, systemd timer, `husk list --json` fo
 
 M5, as needed: RRULE description, subtask rendering, colors from the vdir `color` file, `husk sync --discover`.
 
+After v1, before anything optional: move Radicale from the laptop to the DappNode as a package behind the HTTPS portal, following the steps in the M0 paragraph above (copy `collections/`, re-point the phones and vdirsyncer at the HTTPS URL, clear the vdirsyncer pair status, drop the laptop CA from the phones). Until then Radicale is started by hand on the laptop after each reboot.
+
 Later, optional: `CaldavStore` implementing `Store` over HTTPS with `reqwest` (PROPFIND, REPORT, sync-token, If-Match on PUT). At that point vdirsyncer becomes optional and husk can run on a machine with no sync setup. Also: recurrence completion (advance `DUE` by the rule, bump `SEQUENCE`), creating projects (MKCALENDAR), attachments never.
 
 ## 10. Known pitfalls, collected up front
