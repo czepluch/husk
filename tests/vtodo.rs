@@ -29,6 +29,10 @@ fn text_in(task: &Task, zone: Tz) -> String {
     codec::serialize(&vtodo::apply_in(task, Some(zone)).expect("apply"))
 }
 
+fn tz_text(zone: Tz, year: i32) -> String {
+    codec::serialize(&codec::Document::new(vtodo::vtimezone(zone, year)))
+}
+
 /// Lines present in `after` that were not in `before`.
 fn added_lines(before: &str, after: &str) -> Vec<String> {
     let before = codec::unfold(before);
@@ -295,9 +299,7 @@ fn a_utc_due_is_rewritten_in_the_zone_when_edited_and_apple_files_keep_theirs() 
 
 #[test]
 fn generated_vtimezones_carry_the_years_transitions() {
-    let text = codec::serialize(&husk::ical::codec::Document::new(vtodo::vtimezone(
-        CPH, 2026,
-    )));
+    let text = tz_text(CPH, 2026);
     for line in [
         "TZID:Europe/Copenhagen",
         "BEGIN:STANDARD\r\nDTSTART:20260101T000000\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0100\r\nTZNAME:CET",
@@ -306,17 +308,11 @@ fn generated_vtimezones_carry_the_years_transitions() {
     ] {
         assert!(text.contains(line), "missing {line:?} in\n{text}");
     }
-    let utc_zone = codec::serialize(&husk::ical::codec::Document::new(vtodo::vtimezone(
-        Tz::UTC,
-        2026,
-    )));
+    let utc_zone = tz_text(Tz::UTC, 2026);
     assert_eq!(utc_zone.matches("BEGIN:STANDARD").count(), 1, "{utc_zone}");
     assert!(!utc_zone.contains("DAYLIGHT"));
     assert!(utc_zone.contains("TZOFFSETTO:+0000"));
-    let sydney = codec::serialize(&husk::ical::codec::Document::new(vtodo::vtimezone(
-        Tz::Australia__Sydney,
-        2026,
-    )));
+    let sydney = tz_text(Tz::Australia__Sydney, 2026);
     assert!(
         sydney.contains(
             "BEGIN:DAYLIGHT\r\nDTSTART:20260101T000000\r\nTZOFFSETFROM:+1100\r\nTZOFFSETTO:+1100"
@@ -327,10 +323,6 @@ fn generated_vtimezones_carry_the_years_transitions() {
         sydney.matches("BEGIN:").count(),
         4,
         "VTIMEZONE plus three observances:\n{sydney}"
-    );
-    assert!(
-        vtodo::local_zone().is_some(),
-        "TZ or the system zone names a known zone"
     );
 }
 
@@ -654,4 +646,127 @@ fn absurd_durations_and_sequences_degrade_instead_of_panicking() {
     let mut doc = task.raw().clone();
     vtodo::bump(&mut doc, utc(2026, 8, 31, 13, 0, 0)).unwrap();
     assert!(codec::serialize(&doc).contains("SEQUENCE:18446744073709551615\r\n"));
+}
+
+#[test]
+fn vtimezone_onsets_are_exact_for_half_hour_zones_and_labels_follow_the_offset() {
+    let st_johns = tz_text(Tz::America__St_Johns, 2026);
+    for line in [
+        "BEGIN:DAYLIGHT\r\nDTSTART:20260308T020000\r\nTZOFFSETFROM:-0330\r\nTZOFFSETTO:-0230\r\nTZNAME:NDT",
+        "BEGIN:STANDARD\r\nDTSTART:20261101T020000\r\nTZOFFSETFROM:-0230\r\nTZOFFSETTO:-0330\r\nTZNAME:NST",
+    ] {
+        assert!(st_johns.contains(line), "missing {line:?} in\n{st_johns}");
+    }
+    let dublin = tz_text(Tz::Europe__Dublin, 2026);
+    assert!(
+        dublin.contains("BEGIN:STANDARD\r\nDTSTART:20260101T000000\r\nTZOFFSETFROM:+0000\r\nTZOFFSETTO:+0000\r\nTZNAME:GMT"),
+        "winter is not daylight time:\n{dublin}"
+    );
+    assert!(!dublin.contains("DAYLIGHT"), "{dublin}");
+}
+
+#[test]
+fn a_husk_vtimezone_grows_when_the_due_moves_to_another_year() {
+    let new = NewTask {
+        summary: "Later".to_string(),
+        due: Some(Due::DateTime(utc(2026, 9, 3, 7, 0, 0))),
+        ..NewTask::default()
+    };
+    let text = codec::serialize(&vtodo::new_document_in(
+        &new,
+        "u-1",
+        utc(2026, 8, 31, 13, 0, 0),
+        Some(CPH),
+    ));
+    let mut task = vtodo::parse_task(&text, ProjectId::new("p")).unwrap();
+    task.due = Some(Due::DateTime(utc(2027, 7, 1, 10, 0, 0)));
+    let after = text_in(&task, CPH);
+    assert!(
+        after.contains("DUE;TZID=Europe/Copenhagen:20270701T120000\r\n"),
+        "{after}"
+    );
+    assert_eq!(after.matches("BEGIN:VTIMEZONE").count(), 1, "{after}");
+    assert!(
+        after.contains("DTSTART:20260329T020000\r\n"),
+        "2026 kept:\n{after}"
+    );
+    assert!(
+        after.contains("DTSTART:20270328T020000\r\n"),
+        "2027 added:\n{after}"
+    );
+    assert_eq!(
+        vtodo::parse_task(&after, ProjectId::new("p")).unwrap().due,
+        task.due
+    );
+
+    let before = common::fixture("apple/timed-alarm.ics");
+    let mut apple = load("apple/timed-alarm.ics");
+    apple.due = Some(Due::DateTime(utc(2027, 7, 1, 10, 0, 0)));
+    let added = added_lines(&before, &text_in(&apple, CPH));
+    assert_eq!(
+        added.len(),
+        2,
+        "only DUE and DTSTART; Apple's RRULE VTIMEZONE covers 2027: {added:?}"
+    );
+}
+
+#[test]
+fn the_second_pass_through_the_repeated_hour_is_written_in_utc() {
+    let mut task = load("apple/no-due.ics");
+    task.due = Some(Due::DateTime(utc(2026, 10, 25, 0, 30, 0)));
+    let first = text_in(&task, CPH);
+    assert!(
+        first.contains("DUE;TZID=Europe/Copenhagen:20261025T023000\n"),
+        "{first}"
+    );
+    task.due = Some(Due::DateTime(utc(2026, 10, 25, 1, 30, 0)));
+    let second = text_in(&task, CPH);
+    assert!(second.contains("DUE:20261025T013000Z\n"), "{second}");
+    assert!(!second.contains("VTIMEZONE"), "{second}");
+    assert_eq!(
+        vtodo::parse_task(&second, ProjectId::new("p")).unwrap().due,
+        task.due
+    );
+}
+
+#[test]
+fn a_generated_file_round_trips_unchanged() {
+    let new = NewTask {
+        summary: "Round".to_string(),
+        due: Some(Due::DateTime(utc(2026, 9, 3, 7, 0, 0))),
+        ..NewTask::default()
+    };
+    let doc = vtodo::new_document_in(&new, "u-2", utc(2026, 8, 31, 13, 0, 0), Some(CPH));
+    let text = codec::serialize(&doc);
+    let task = vtodo::parse_task(&text, ProjectId::new("p")).unwrap();
+    assert_eq!(vtodo::apply_in(&task, Some(CPH)).unwrap(), *task.raw());
+    assert_eq!(vtodo::apply(&task).unwrap(), *task.raw());
+    assert_eq!(codec::serialize(&vtodo::apply(&task).unwrap()), text);
+}
+
+#[test]
+fn the_zone_comes_from_tz_when_it_is_a_name_else_from_the_system() {
+    use vtodo::zone_named;
+    assert_eq!(
+        zone_named(Some("Europe/Oslo"), Some("Europe/Copenhagen")),
+        Some(Tz::Europe__Oslo)
+    );
+    assert_eq!(
+        zone_named(Some(":Europe/Oslo"), None),
+        Some(Tz::Europe__Oslo)
+    );
+    assert_eq!(
+        zone_named(Some(":/etc/localtime"), Some("Europe/Copenhagen")),
+        Some(CPH)
+    );
+    assert_eq!(
+        zone_named(
+            Some("CET-1CEST,M3.5.0,M10.5.0/3"),
+            Some("Europe/Copenhagen")
+        ),
+        Some(CPH)
+    );
+    assert_eq!(zone_named(Some("UTC"), None), Some(Tz::UTC));
+    assert_eq!(zone_named(None, Some("Nowhere/Nope")), None);
+    assert_eq!(zone_named(None, None), None);
 }

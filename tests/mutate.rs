@@ -68,14 +68,15 @@ fn clear_input(app: &mut App) {
 
 /// The DUE line husk writes for a local wall time, in the zone in effect.
 fn due_line(y: i32, m: u32, d: u32, h: u32, mi: u32) -> String {
-    let tz = vtodo::local_zone().expect("a known local zone");
-    let wall = Local
-        .with_ymd_and_hms(y, m, d, h, mi, 0)
-        .single()
-        .unwrap()
-        .with_timezone(&tz)
-        .format("%Y%m%dT%H%M%S");
-    format!("DUE;TZID={}:{wall}", tz.name())
+    let local = Local.with_ymd_and_hms(y, m, d, h, mi, 0).single().unwrap();
+    match vtodo::local_zone() {
+        Some(tz) => format!(
+            "DUE;TZID={}:{}",
+            tz.name(),
+            local.with_timezone(&tz).format("%Y%m%dT%H%M%S")
+        ),
+        None => local.to_utc().format("DUE:%Y%m%dT%H%M%SZ").to_string(),
+    }
 }
 
 fn file(s: &Sample, rel: &str) -> String {
