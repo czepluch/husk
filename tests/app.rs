@@ -836,3 +836,23 @@ fn local_utc_at(y: i32, m: u32, d: u32, h: u32, mi: u32) -> chrono::DateTime<chr
         .unwrap()
         .to_utc()
 }
+
+#[test]
+fn recurring_tasks_show_the_rule_in_words() {
+    let theme = Theme::load("phosphor", None).unwrap();
+    let mut s = sample();
+    let app = &mut s.app;
+    app.view_index = 3;
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(text.contains("Oil balcony #home ↻ weekly"), "{text}");
+
+    while app.selected_task().map(|t| t.uid.as_str()) != Some("soon") {
+        app.handle_key(key('j'));
+    }
+    app.handle_key(code(KeyCode::Enter));
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(text.contains("Repeats   ↻ weekly  FREQ=WEEKLY"), "{text}");
+}

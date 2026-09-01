@@ -303,6 +303,7 @@ src/
     mod.rs        Store trait
     vdir.rs       VdirStore
   quickadd.rs     tokenizer + date parser
+  recur.rs        RRULE to words, display only
   alarms.rs       fire-time computation (shared by TUI and notify)
   sync.rs         run vdirsyncer, debounce
   notify.rs       husk notify
@@ -313,7 +314,7 @@ src/
     views.rs        project pane, task list, detail, prompts, popups
 ```
 
-Dependencies: `ratatui`, `crossterm`, `clap`, `serde` + `toml`, `chrono` + `chrono-tz`, `uuid`, `notify-rust` (desktop notifications), `notify` (file watching for theme hot reload), `anyhow`, `directories`, `unicode-width` (display widths for wrapping and column layout), `serde_json` (the notifier state file and `husk list --json`). For RRULE display, `rrule` for parsing and validation only; it has no human-readable describer, so the "weekly" / "every 2nd Tuesday" text is a small function of ours, and occurrences are never expanded in v1. For Base16 scheme files (M5), `serde_yaml` is archived upstream; a scheme file is a flat `palette:` map, so either a maintained YAML crate or a few dozen lines of hand parsing, decided when M5 starts. Write the iCalendar codec yourself; the existing crates either do not preserve unknown properties or do not round-trip, and the format is small enough that a few hundred lines with fixtures is less risk than a dependency you have to fight.
+Dependencies: `ratatui`, `crossterm`, `clap`, `serde` + `toml`, `chrono` + `chrono-tz`, `uuid`, `notify-rust` (desktop notifications), `notify` (file watching for theme hot reload), `anyhow`, `directories`, `unicode-width` (display widths for wrapping and column layout), `serde_json` (the notifier state file and `husk list --json`). For RRULE display, `recur.rs` parses the handful of parts worth describing (FREQ, INTERVAL, BYDAY with ordinals, BYMONTHDAY, BYMONTH, UNTIL, COUNT) into "weekly", "every 2nd Tuesday" and so on, shows anything else as written, and never expands occurrences; the `rrule` crate is not needed for that. For Base16 scheme files (M5), `serde_yaml` is archived upstream; a scheme file is a flat `palette:` map, so either a maintained YAML crate or a few dozen lines of hand parsing, decided when M5 starts. Write the iCalendar codec yourself; the existing crates either do not preserve unknown properties or do not round-trip, and the format is small enough that a few hundred lines with fixtures is less risk than a dependency you have to fight.
 
 Config:
 

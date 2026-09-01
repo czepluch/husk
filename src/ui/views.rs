@@ -13,6 +13,7 @@ use super::app::{
     due_label, stamp,
 };
 use crate::model::{Priority, Status, Task};
+use crate::recur;
 use crate::theme::Theme;
 
 const VIEWS_WIDTH: u16 = 24;
@@ -227,11 +228,16 @@ fn task_item<'a>(
             .iter()
             .map(|tag| Span::styled(format!("#{tag}"), dim(theme.tag))),
     );
-    if task.is_recurring() {
+    if let Some(rule) = &task.rrule {
         words.push(Span::styled(
             theme.symbols.recurring.clone(),
             dim(theme.recurring),
         ));
+        words.extend(
+            recur::describe(rule)
+                .split_whitespace()
+                .map(|word| Span::styled(word.to_string(), dim(theme.recurring))),
+        );
     }
 
     let width = usize::from(pane_width.saturating_sub(2))
@@ -383,9 +389,10 @@ fn draw_detail(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         lines.push(Line::from(vec![
             label("Repeats"),
             Span::styled(
-                format!("{} {rrule}", theme.symbols.recurring),
+                format!("{} {}", theme.symbols.recurring, recur::describe(rrule)),
                 theme.recurring,
             ),
+            Span::styled(format!("  {rrule}"), theme.muted),
         ]));
     }
     if !task.alarms.is_empty() {

@@ -8,6 +8,7 @@ pub mod ical;
 pub mod model;
 pub mod notify;
 pub mod quickadd;
+pub mod recur;
 pub mod store;
 pub mod sync;
 pub mod theme;
