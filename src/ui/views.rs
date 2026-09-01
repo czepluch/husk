@@ -427,7 +427,12 @@ fn draw_detail(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 }
 
 fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
-    let status = sync_status(app);
+    // While a prompt is open, the reason it was refused sits at the right
+    // end of the bar, where the sync status otherwise goes.
+    let status = match (&app.mode, &app.message) {
+        (Mode::Input, Some(message)) => Some((message.clone(), true)),
+        _ => sync_status(app),
+    };
     let status_width =
         u16::try_from(status.as_ref().map_or(0, |(t, _)| t.width() + 2)).unwrap_or(0);
     let [left, right] =
@@ -534,16 +539,14 @@ fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
         ),
         InputKind::Tags => ("tags", "  comma separated"),
     };
-    // A failed submit keeps the prompt open; its reason replaces the hint.
-    let trailer = match &app.message {
-        Some(message) => Span::styled(format!("  {message}"), theme.overdue),
-        None => Span::styled(hint.to_string(), theme.muted),
-    };
+    // The hint is a placeholder: shown while the line is empty, gone once
+    // typing starts, so nothing shifts under the cursor.
+    let placeholder = if input.buffer.is_empty() { hint } else { "" };
     Line::from(vec![
         Span::styled(format!(" {prompt}> "), theme.help_key),
         Span::raw(input.buffer.clone()),
         Span::styled("▌", theme.accent),
-        trailer,
+        Span::styled(placeholder.to_string(), theme.muted),
     ])
 }
 

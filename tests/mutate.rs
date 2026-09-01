@@ -212,8 +212,21 @@ fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
     assert_eq!(s.app.view_name(&s.app.view()), "Life");
     s.app.handle_key(key('a'));
     assert_eq!(s.app.mode, Mode::Input);
-    assert!(render(&s.app).contains("add> "));
+    let empty = render(&s.app);
+    assert!(
+        empty.contains("add> ▌  title due:tomorrow"),
+        "placeholder while empty:\n{empty}"
+    );
     type_text(&mut s.app, "Call bank due:tomorrow 09:00 +money pri:h");
+    let typing = render(&s.app);
+    assert!(
+        typing.contains("add> Call bank due:tomorrow 09:00 +money pri:h▌"),
+        "{typing}"
+    );
+    assert!(
+        !typing.contains("title due:tomorrow"),
+        "placeholder gone once typing starts:\n{typing}"
+    );
     s.app.handle_key(code(KeyCode::Enter));
     assert_eq!(s.app.message.as_deref(), Some("Added: Call bank (u undo)"));
     let text = find_file(&s, "life", "SUMMARY:Call bank").expect("created in life");
@@ -260,10 +273,19 @@ fn a_needs_a_project_and_honours_overrides() {
     );
     assert!(find_file(&s, "life", "No home").is_none());
     assert_eq!(s.app.mode, Mode::Input, "a failed prompt stays open");
+    let screen = render(&s.app);
     assert!(
-        render(&s.app).contains("default_project"),
-        "the reason is visible while the prompt is open:\n{}",
-        render(&s.app)
+        screen.contains("default_project"),
+        "the reason is visible while the prompt is open:\n{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .last()
+            .unwrap()
+            .trim_end()
+            .ends_with("default_project"),
+        "at the right end of the bar, not under the cursor:\n{screen}"
     );
     s.app.handle_key(code(KeyCode::Esc));
 
