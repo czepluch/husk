@@ -3,7 +3,7 @@
 Notable changes per release. Versions follow semver; the format follows
 Keep a Changelog.
 
-## Unreleased
+## 0.2.0 - 2026-09-02
 
 - Adding and editing tasks happens in a popup form: title (the quick-add
   grammar still works there and wins over the fields), due, priority,

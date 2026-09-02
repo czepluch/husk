@@ -28,9 +28,9 @@ Each release carries Linux x86_64 binaries: a `linux-gnu` build and a static
 `linux-musl` one for distributions with an older glibc.
 
 ```
-gh release download v0.1.0 --repo czepluch/husk --pattern '*linux-gnu.tar.gz'
-tar xzf husk-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
-install -Dm755 husk-v0.1.0-x86_64-unknown-linux-gnu/husk ~/.local/bin/husk
+gh release download v0.2.0 --repo czepluch/husk --pattern '*linux-gnu.tar.gz'
+tar xzf husk-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
+install -Dm755 husk-v0.2.0-x86_64-unknown-linux-gnu/husk ~/.local/bin/husk
 ```
 
 Or build from source with Rust 1.89 or newer:
