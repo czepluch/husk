@@ -775,12 +775,6 @@ impl App {
                 self.mode = self.return_to;
                 return;
             }
-            KeyCode::Enter if form.field == FormField::Notes => {
-                self.editor_request = Some(EditorRequest {
-                    text: form.notes.clone(),
-                    target: EditorTarget::FormNotes,
-                });
-            }
             KeyCode::Enter => match self.form_submit(&form) {
                 Ok(text) => {
                     self.mode = self.return_to;
@@ -811,7 +805,14 @@ impl App {
                     }
                     _ => {}
                 },
-                FormField::Notes => {}
+                FormField::Notes => {
+                    if key.code == KeyCode::Char('e') {
+                        self.editor_request = Some(EditorRequest {
+                            text: form.notes.clone(),
+                            target: EditorTarget::FormNotes,
+                        });
+                    }
+                }
             },
         }
         self.form = Some(form);

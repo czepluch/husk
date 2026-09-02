@@ -1158,20 +1158,20 @@ fn the_form_notes_row_goes_through_the_editor() {
     for _ in 0..5 {
         s.app.handle_key(code(KeyCode::Tab));
     }
-    s.app.handle_key(code(KeyCode::Enter));
+    s.app.handle_key(key('e'));
     let request = s.app.take_editor_request().unwrap();
     assert_eq!(request.target, EditorTarget::FormNotes);
     assert_eq!(request.text, "");
     s.app.set_form_notes("From the editor\nsecond line\n");
     assert_eq!(s.app.mode, Mode::Form, "the form stays open");
     assert!(render(&s.app).contains("From the editor"));
-    s.app.handle_key(code(KeyCode::BackTab));
     s.app.handle_key(code(KeyCode::Enter));
     let text = file(&s, "life/no-due.ics");
     assert!(
         text.contains("DESCRIPTION:From the editor\\nsecond line\n"),
         "{text}"
     );
+    assert_eq!(s.app.mode, Mode::Normal, "Enter on the notes row saves");
 }
 
 #[test]

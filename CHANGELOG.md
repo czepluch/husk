@@ -7,7 +7,8 @@ Keep a Changelog.
 
 - Adding and editing tasks happens in a popup form: title (the quick-add
   grammar still works there and wins over the fields), due, priority,
-  tags, project and notes, with `$EDITOR` behind the notes row. `a` and
+  tags, project and notes, with `$EDITOR` behind the notes row (`e`
+  opens it; Enter always saves). `a` and
   `e` open it; `t`, `T` and `p` stay as single-field shortcuts. A new
   task starts in the visible project, else `default_project`, else the
   first list.

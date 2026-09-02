@@ -492,11 +492,7 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             theme,
         ),
         Mode::Form => hints(
-            &[
-                ("Tab", "next field"),
-                ("Enter", "save (on notes: edit)"),
-                ("Esc", "cancel"),
-            ],
+            &[("Tab", "next field"), ("Enter", "save"), ("Esc", "cancel")],
             theme,
         ),
         _ if app.message.is_some() => Line::from(vec![
@@ -689,13 +685,13 @@ fn draw_form(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                 FormField::Notes => {
                     let preview = form.notes.lines().next().unwrap_or_default();
                     if preview.is_empty() {
-                        spans.push(Span::styled("Enter opens $EDITOR", theme.muted));
+                        spans.push(Span::styled("e opens $EDITOR", theme.muted));
                     } else {
                         spans.push(Span::styled(preview.to_string(), theme.base));
                         if form.notes.lines().count() > 1 {
                             spans.push(Span::styled(" …", theme.muted));
                         }
-                        spans.push(Span::styled("  (Enter edits)", theme.muted));
+                        spans.push(Span::styled("  (e edits)", theme.muted));
                     }
                 }
             }
