@@ -399,7 +399,7 @@ fn alarm_component(alarm: &Alarm, summary: &str) -> Component {
             .with_param("VALUE", "DATE-TIME"),
         Alarm::Relative { offset, anchor } => {
             let trigger = Property::new("TRIGGER", format_duration(*offset));
-            // RFC 5545 defaults RELATED to START, and husk never writes a DTSTART.
+            // RFC 5545 defaults RELATED to START, and husk never adds a DTSTART.
             match anchor {
                 Anchor::Start => trigger.with_param("RELATED", "START"),
                 Anchor::Due => trigger.with_param("RELATED", "END"),

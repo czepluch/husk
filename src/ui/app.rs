@@ -925,7 +925,8 @@ impl App {
                 let changed = task.raw != before.raw;
                 let moved = task.project != project;
                 if moved && let Err(e) = self.store.move_to(&uid, &project) {
-                    // The field edits are on disk already; cover them.
+                    // The field edits reached the disk even though the
+                    // move failed, so undo must cover them.
                     if changed {
                         self.push_undo(Undo::Restore(Box::new(before)));
                         self.after_write(Some(&uid));
