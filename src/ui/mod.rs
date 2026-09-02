@@ -17,7 +17,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
 use crate::theme::Theme;
-use app::App;
+use app::{App, EditorTarget};
 
 /// Runs the TUI. `reload` reads the theme, once at start and again whenever
 /// a file under `watch` changes, so a theme can be edited while husk runs.
@@ -68,13 +68,17 @@ fn event_loop(
         }
         if let Some(request) = app.take_editor_request() {
             ratatui::restore();
-            let extension = if request.raw { "ics" } else { "md" };
+            let extension = match &request.target {
+                EditorTarget::Raw(_) => "ics",
+                _ => "md",
+            };
             let edited = edit_with_editor(&request.text, extension);
             *terminal = ratatui::init();
             terminal.clear()?;
-            match (edited, request.raw) {
-                (Ok(text), true) => app.apply_raw(&request.uid, &text),
-                (Ok(text), false) => app.apply_notes(&request.uid, &text),
+            match (edited, request.target) {
+                (Ok(text), EditorTarget::Raw(uid)) => app.apply_raw(&uid, &text),
+                (Ok(text), EditorTarget::Notes(uid)) => app.apply_notes(&uid, &text),
+                (Ok(text), EditorTarget::FormNotes) => app.set_form_notes(&text),
                 (Err(e), _) => app.notify(format!("{e:#}")),
             }
         }

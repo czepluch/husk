@@ -52,12 +52,12 @@ pub enum Mode {
     Confirm,
     /// Choosing a project to move the task to.
     Pick,
+    /// The add or edit form.
+    Form,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputKind {
-    QuickAdd,
-    Summary,
     Due,
     Tags,
 }
@@ -85,13 +85,84 @@ pub struct Input {
     pub uid: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormField {
+    Title,
+    Due,
+    Priority,
+    Tags,
+    Project,
+    Notes,
+}
+
+pub const FORM_FIELDS: [FormField; 6] = [
+    FormField::Title,
+    FormField::Due,
+    FormField::Priority,
+    FormField::Tags,
+    FormField::Project,
+    FormField::Notes,
+];
+
+/// The add or edit form. The text fields share one cursor, moved to the
+/// end of a field's text when it gains focus.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Form {
+    /// The task being edited; none when adding.
+    pub uid: Option<String>,
+    pub title: String,
+    pub due: String,
+    /// What the due field started as; unchanged text leaves the task's
+    /// due date alone, so a re-parse cannot shave off odd seconds.
+    initial_due: String,
+    pub priority: Priority,
+    pub tags: String,
+    /// Index into the app's projects.
+    pub project: usize,
+    pub notes: String,
+    pub field: FormField,
+    pub cursor: usize,
+}
+
+impl Form {
+    /// Moves focus by `delta` through the fields and puts the cursor at
+    /// the end of the newly focused text.
+    fn focus(&mut self, delta: isize) {
+        let at = FORM_FIELDS
+            .iter()
+            .position(|f| *f == self.field)
+            .unwrap_or(0);
+        self.field = FORM_FIELDS[step(at, delta, FORM_FIELDS.len())];
+        self.cursor = self.text().map_or(0, |t| t.chars().count());
+    }
+
+    /// The focused field's text, when it is a text field.
+    pub fn text(&self) -> Option<&str> {
+        match self.field {
+            FormField::Title => Some(&self.title),
+            FormField::Due => Some(&self.due),
+            FormField::Tags => Some(&self.tags),
+            _ => None,
+        }
+    }
+}
+
 /// Text the run loop should open in `$EDITOR`, and what to do with it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditorRequest {
-    pub uid: String,
     pub text: String,
-    /// The whole `.ics` file rather than the notes.
-    pub raw: bool,
+    pub target: EditorTarget,
+}
+
+/// What the text edited in `$EDITOR` becomes when it comes back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditorTarget {
+    /// This task's notes.
+    Notes(String),
+    /// This task's whole `.ics` file.
+    Raw(String),
+    /// The notes field of the open form.
+    FormNotes,
 }
 
 enum Undo {
@@ -127,6 +198,8 @@ pub struct App {
     /// Lines scrolled off the top of the detail view.
     pub detail_scroll: u16,
     pub input: Option<Input>,
+    /// The add or edit form while one is open.
+    pub form: Option<Form>,
     /// UID and summary of the task a delete is waiting on.
     pub confirm: Option<(String, String)>,
     /// Cursor in the project picker, and the task it will move.
@@ -171,6 +244,7 @@ impl App {
             show_done: false,
             detail_scroll: 0,
             input: None,
+            form: None,
             confirm: None,
             pick_index: 0,
             pick_uid: None,
@@ -341,6 +415,7 @@ impl App {
         match self.mode {
             Mode::Filter => self.filter_key(key),
             Mode::Input => self.input_key(key),
+            Mode::Form => self.form_key(key),
             Mode::Confirm => self.confirm_key(key.code),
             Mode::Pick => self.pick_key(key.code),
             Mode::Help => {
@@ -405,7 +480,7 @@ impl App {
     /// Keys that act on the selected task, shared by the list and the detail.
     fn action_key(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Char('a') => self.start_input(InputKind::QuickAdd, String::new(), None),
+            KeyCode::Char('a') => self.open_form(None),
             KeyCode::Char('s') => {
                 if self.sync_enabled() {
                     self.syncer.request();
@@ -424,9 +499,9 @@ impl App {
                 }
             }
             KeyCode::Char('e') => {
-                if let Some(task) = self.selected_task() {
-                    let (uid, text) = (task.uid.clone(), task.summary.clone());
-                    self.start_input(InputKind::Summary, text, Some(uid));
+                let uid = self.selected_task().map(|t| t.uid.clone());
+                if let Some(uid) = uid {
+                    self.open_form(Some(&uid));
                 }
             }
             KeyCode::Char('t') => {
@@ -460,18 +535,16 @@ impl App {
             KeyCode::Char('n') => {
                 if let Some(task) = self.selected_task() {
                     self.editor_request = Some(EditorRequest {
-                        uid: task.uid.clone(),
                         text: task.description.clone().unwrap_or_default(),
-                        raw: false,
+                        target: EditorTarget::Notes(task.uid.clone()),
                     });
                 }
             }
             KeyCode::Char('o') => {
                 if let Some(task) = self.selected_task() {
                     self.editor_request = Some(EditorRequest {
-                        uid: task.uid.clone(),
                         text: codec::serialize(task.raw()),
-                        raw: true,
+                        target: EditorTarget::Raw(task.uid.clone()),
                     });
                 }
             }
@@ -579,21 +652,10 @@ impl App {
     }
 
     fn submit(&mut self, input: &Input) -> Result<String> {
-        if input.kind != InputKind::QuickAdd && input.buffer == input.initial {
+        if input.buffer == input.initial {
             return Ok(String::new());
         }
         match (input.kind, &input.uid) {
-            (InputKind::QuickAdd, _) => self.quick_add(&input.buffer),
-            (InputKind::Summary, Some(uid)) => {
-                let summary = input.buffer.trim().to_string();
-                if summary.is_empty() {
-                    return Err(anyhow!("a task needs a title"));
-                }
-                self.change(uid, "Renamed", |task| {
-                    task.summary = summary;
-                    Ok(())
-                })
-            }
             (InputKind::Due, Some(uid)) => {
                 let text = input.buffer.trim();
                 let due = if text.is_empty() {
@@ -623,13 +685,7 @@ impl App {
                 })
             }
             (InputKind::Tags, Some(uid)) => {
-                let mut tags: Vec<String> = Vec::new();
-                for tag in input.buffer.split(',') {
-                    let tag = tag.trim().trim_start_matches('#').trim().to_string();
-                    if !tag.is_empty() && !tags.contains(&tag) {
-                        tags.push(tag);
-                    }
-                }
+                let tags = split_tags(&input.buffer);
                 self.change(uid, "Tags set", |task| {
                     task.tags = tags;
                     Ok(())
@@ -639,43 +695,212 @@ impl App {
         }
     }
 
-    fn quick_add(&mut self, text: &str) -> Result<String> {
-        let parsed = quickadd::parse(text, self.now);
+    /// Opens the form empty, or prefilled from a task.
+    fn open_form(&mut self, uid: Option<&str>) {
+        let form = match uid.and_then(|uid| self.tasks.iter().find(|t| t.uid == uid)) {
+            Some(task) => {
+                let due = due_input(task.due, &self.config);
+                Form {
+                    uid: Some(task.uid.clone()),
+                    title: task.summary.clone(),
+                    initial_due: due.clone(),
+                    due,
+                    priority: task.priority,
+                    tags: task.tags.join(", "),
+                    project: self
+                        .projects
+                        .iter()
+                        .position(|p| p.id == task.project)
+                        .unwrap_or(0),
+                    notes: task.description.clone().unwrap_or_default(),
+                    field: FormField::Title,
+                    cursor: task.summary.chars().count(),
+                }
+            }
+            None => Form {
+                uid: None,
+                title: String::new(),
+                due: String::new(),
+                initial_due: String::new(),
+                priority: Priority::None,
+                tags: String::new(),
+                project: self.form_default_project(),
+                notes: String::new(),
+                field: FormField::Title,
+                cursor: 0,
+            },
+        };
+        self.form = Some(form);
+        self.return_to = self.mode;
+        self.mode = Mode::Form;
+    }
+
+    /// Where a new task lands before `@project` or the selector says
+    /// otherwise: the current project view, else `default_project`, else
+    /// the first project.
+    fn form_default_project(&self) -> usize {
+        let id = match self.view() {
+            View::Project(id) => Some(id),
+            _ => self
+                .config
+                .default_project
+                .as_deref()
+                .and_then(|name| self.find_project(name)),
+        };
+        id.and_then(|id| self.projects.iter().position(|p| p.id == id))
+            .unwrap_or(0)
+    }
+
+    fn form_key(&mut self, key: KeyEvent) {
+        let Some(mut form) = self.form.take() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = self.return_to;
+                return;
+            }
+            KeyCode::Enter if form.field == FormField::Notes => {
+                self.editor_request = Some(EditorRequest {
+                    text: form.notes.clone(),
+                    target: EditorTarget::FormNotes,
+                });
+            }
+            KeyCode::Enter => match self.form_submit(&form) {
+                Ok(text) => {
+                    self.mode = self.return_to;
+                    self.report(Ok(text));
+                    return;
+                }
+                // The form stays open so the mistake can be fixed.
+                Err(e) => self.notify(format!("{e:#}")),
+            },
+            KeyCode::Tab | KeyCode::Down => form.focus(1),
+            KeyCode::BackTab | KeyCode::Up => form.focus(-1),
+            _ => match form.field {
+                FormField::Title => edit_key(&mut form.title, &mut form.cursor, key),
+                FormField::Due => edit_key(&mut form.due, &mut form.cursor, key),
+                FormField::Tags => edit_key(&mut form.tags, &mut form.cursor, key),
+                FormField::Priority => match key.code {
+                    KeyCode::Left => form.priority = priority_back(form.priority),
+                    KeyCode::Right | KeyCode::Char(' ') => {
+                        form.priority = priority_next(form.priority);
+                    }
+                    _ => {}
+                },
+                FormField::Project => match key.code {
+                    KeyCode::Left => form.project = form.project.saturating_sub(1),
+                    KeyCode::Right => {
+                        form.project =
+                            (form.project + 1).min(self.projects.len().saturating_sub(1));
+                    }
+                    _ => {}
+                },
+                FormField::Notes => {}
+            },
+        }
+        self.form = Some(form);
+    }
+
+    /// Saves the form: creates a task, or applies every field to the one
+    /// being edited. Grammar tokens typed in the title (`due:`, `pri:`,
+    /// `+tag`, `@project`) win over the corresponding fields.
+    fn form_submit(&mut self, form: &Form) -> Result<String> {
+        let parsed = quickadd::parse(&form.title, self.now);
         if parsed.summary.is_empty() {
             return Err(anyhow!("a task needs a title"));
+        }
+        let due_text = form.due.trim();
+        let due = match (parsed.due, due_text) {
+            (Some(due), _) => Some(due),
+            (None, "") => None,
+            (None, text) => Some(
+                quickadd::parse(&format!("due:{text}"), self.now)
+                    .due
+                    .with_context(|| format!("could not read a date from {text:?}"))?,
+            ),
+        };
+        let due_touched = parsed.due.is_some() || due_text != form.initial_due.trim();
+        let priority = if parsed.priority == Priority::None {
+            form.priority
+        } else {
+            parsed.priority
+        };
+        let mut tags = split_tags(&form.tags);
+        for tag in parsed.tags {
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
         }
         let project = match &parsed.project {
             Some(name) => self
                 .find_project(name)
                 .with_context(|| format!("no project named {name:?}"))?,
-            None => match self.view() {
-                View::Project(id) => id,
-                _ => self
-                    .config
-                    .default_project
-                    .as_deref()
-                    .and_then(|name| self.find_project(name))
-                    .context("add from a project view, use @project, or set default_project")?,
-            },
+            None => self
+                .projects
+                .get(form.project)
+                .map(|p| p.id.clone())
+                .context("no projects")?,
         };
-        let alarms = match parsed.due {
-            Some(Due::DateTime(_)) => default_alarms(&self.config.default_alarm_leads),
-            _ => Vec::new(),
-        };
-        let new = NewTask {
-            summary: parsed.summary.clone(),
-            description: None,
-            due: parsed.due,
-            priority: parsed.priority,
-            tags: parsed.tags,
-            alarms,
-        };
-        let task = self.store.create(&project, new)?;
-        self.push_undo(Undo::Created(task.uid.clone()));
-        self.after_write(Some(&task.uid));
-        Ok(format!("Added: {} (u undo)", parsed.summary))
+        let notes = form.notes.trim_end().to_string();
+        let leads = self.config.default_alarm_leads.clone();
+        match &form.uid {
+            None => {
+                let alarms = match due {
+                    Some(Due::DateTime(_)) => default_alarms(&leads),
+                    _ => Vec::new(),
+                };
+                let new = NewTask {
+                    summary: parsed.summary.clone(),
+                    description: (!notes.is_empty()).then_some(notes),
+                    due,
+                    priority,
+                    tags,
+                    alarms,
+                };
+                let task = self.store.create(&project, new)?;
+                self.push_undo(Undo::Created(task.uid.clone()));
+                self.after_write(Some(&task.uid));
+                Ok(format!("Added: {} (u undo)", parsed.summary))
+            }
+            Some(uid) => {
+                let uid = uid.clone();
+                let summary = parsed.summary;
+                let changed = self.change(&uid, "Saved", move |task| {
+                    task.summary = summary;
+                    task.priority = priority;
+                    task.tags = tags;
+                    task.description = (!notes.is_empty()).then_some(notes);
+                    if due_touched && task.due != due {
+                        task.due = due;
+                        match due {
+                            // A timed due notifies on the phones only
+                            // through an alarm.
+                            Some(Due::DateTime(_)) if task.alarms.is_empty() => {
+                                task.alarms = default_alarms(&leads);
+                            }
+                            // Relative alarms have nothing left to count from.
+                            None => task
+                                .alarms
+                                .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
+                            _ => {}
+                        }
+                    }
+                    Ok(())
+                })?;
+                let moved = self.move_task_to(&uid, &project)?;
+                Ok(if changed.is_empty() { moved } else { changed })
+            }
+        }
     }
 
+    /// Notes back from `$EDITOR` into the open form.
+    pub fn set_form_notes(&mut self, text: &str) {
+        if let Some(form) = &mut self.form {
+            form.notes = text.trim_end().to_string();
+        }
+    }
     fn toggle_done(&mut self) {
         let Some(task) = self.selected_task() else {
             return;
@@ -703,12 +928,7 @@ impl App {
             return;
         };
         let (uid, current) = (task.uid.clone(), task.priority);
-        let next = match current {
-            Priority::None => Priority::High,
-            Priority::High => Priority::Medium,
-            Priority::Medium => Priority::Low,
-            Priority::Low => Priority::None,
-        };
+        let next = priority_next(current);
         let result = self.change(&uid, "Priority set", move |task| {
             task.priority = next;
             Ok(())
@@ -1053,6 +1273,36 @@ fn word_right(text: &str, cursor: usize) -> usize {
         .take_while(|c| c.is_whitespace())
         .count();
     cursor + word + space
+}
+
+fn priority_next(priority: Priority) -> Priority {
+    match priority {
+        Priority::None => Priority::High,
+        Priority::High => Priority::Medium,
+        Priority::Medium => Priority::Low,
+        Priority::Low => Priority::None,
+    }
+}
+
+fn priority_back(priority: Priority) -> Priority {
+    match priority {
+        Priority::None => Priority::Low,
+        Priority::Low => Priority::Medium,
+        Priority::Medium => Priority::High,
+        Priority::High => Priority::None,
+    }
+}
+
+/// Comma-separated input into clean unique tags; a leading `#` is noise.
+fn split_tags(text: &str) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    for tag in text.split(',') {
+        let tag = tag.trim().trim_start_matches('#').trim().to_string();
+        if !tag.is_empty() && !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
 }
 
 fn plain(key: KeyEvent) -> bool {

@@ -9,8 +9,8 @@ use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap}
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::app::{
-    App, Bucket, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text, bucket, byte_of, due_detail,
-    due_label, stamp,
+    App, Bucket, FORM_FIELDS, FormField, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text,
+    bucket, byte_of, due_detail, due_label, stamp,
 };
 use crate::model::{Priority, Status, Task};
 use crate::recur;
@@ -37,6 +37,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     match app.mode {
         Mode::Help => draw_help(frame, theme, area),
         Mode::Pick => draw_picker(frame, app, theme, area),
+        Mode::Form => draw_form(frame, app, theme, area),
         _ => {}
     }
 }
@@ -47,7 +48,7 @@ fn showing_detail(app: &App) -> bool {
     match app.mode {
         Mode::Detail => true,
         Mode::Help => app.help_from == Mode::Detail,
-        Mode::Input | Mode::Confirm | Mode::Pick => app.return_to == Mode::Detail,
+        Mode::Input | Mode::Confirm | Mode::Pick | Mode::Form => app.return_to == Mode::Detail,
         Mode::Normal | Mode::Filter => false,
     }
 }
@@ -454,7 +455,7 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     // While a prompt is open, the reason it was refused sits at the right
     // end of the bar, where the sync status otherwise goes.
     let status = match (&app.mode, &app.message) {
-        (Mode::Input, Some(message)) => Some((message.clone(), true)),
+        (Mode::Input | Mode::Form, Some(message)) => Some((message.clone(), true)),
         _ => sync_status(app),
     };
     let status_width =
@@ -488,6 +489,14 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         ]),
         Mode::Pick => hints(
             &[("j/k", "choose"), ("Enter", "move"), ("Esc", "cancel")],
+            theme,
+        ),
+        Mode::Form => hints(
+            &[
+                ("Tab", "next field"),
+                ("Enter", "save (on notes: edit)"),
+                ("Esc", "cancel"),
+            ],
             theme,
         ),
         _ if app.message.is_some() => Line::from(vec![
@@ -563,8 +572,6 @@ fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
         return Line::raw("");
     };
     let (prompt, hint) = match input.kind {
-        InputKind::QuickAdd => ("add", "  title due:tomorrow 09:00 pri:H +tag @project"),
-        InputKind::Summary => ("title", ""),
         InputKind::Due => (
             "due",
             "  today | fri | +2d | 2026-09-03, optional HH:MM; empty clears",
@@ -609,6 +616,105 @@ fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     frame.render_stateful_widget(list, popup, &mut state);
 }
 
+fn draw_form(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let Some(form) = &app.form else {
+        return;
+    };
+    let width = 64.min(area.width.saturating_sub(2));
+    let height = u16::try_from(FORM_FIELDS.len() + 2)
+        .unwrap_or(u16::MAX)
+        .min(area.height);
+    let popup = Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    let project = app
+        .projects
+        .get(form.project)
+        .map_or(String::new(), |p| p.name.clone());
+    let lines: Vec<Line> = FORM_FIELDS
+        .iter()
+        .map(|field| {
+            let focused = *field == form.field;
+            let label = match field {
+                FormField::Title => "title",
+                FormField::Due => "due",
+                FormField::Priority => "priority",
+                FormField::Tags => "tags",
+                FormField::Project => "project",
+                FormField::Notes => "notes",
+            };
+            let marker = if focused { " > " } else { "   " };
+            let mut spans = vec![Span::styled(
+                format!("{marker}{label:<9}"),
+                if focused { theme.title } else { theme.help_key },
+            )];
+            match field {
+                FormField::Title | FormField::Due | FormField::Tags => {
+                    let text = match field {
+                        FormField::Title => &form.title,
+                        FormField::Due => &form.due,
+                        _ => &form.tags,
+                    };
+                    if focused {
+                        let (before, after) = text.split_at(byte_of(text, form.cursor));
+                        spans.push(Span::styled(before.to_string(), theme.base));
+                        spans.push(Span::styled("▌", theme.accent));
+                        spans.push(Span::styled(after.to_string(), theme.base));
+                    } else {
+                        spans.push(Span::styled(text.clone(), theme.base));
+                    }
+                    if text.is_empty() && *field == FormField::Title {
+                        spans.push(Span::styled(
+                            " due:fri 09:00 pri:H +tag @project works here",
+                            theme.muted,
+                        ));
+                    }
+                }
+                FormField::Priority => {
+                    let (text, style) = match form.priority {
+                        Priority::High => ("high", theme.pri_high),
+                        Priority::Medium => ("medium", theme.pri_medium),
+                        Priority::Low => ("low", theme.pri_low),
+                        Priority::None => ("none", theme.muted),
+                    };
+                    spans.push(Span::styled(format!("< {text} >"), style));
+                }
+                FormField::Project => {
+                    spans.push(Span::styled(format!("< {project} >"), theme.project));
+                }
+                FormField::Notes => {
+                    let preview = form.notes.lines().next().unwrap_or_default();
+                    if preview.is_empty() {
+                        spans.push(Span::styled("Enter opens $EDITOR", theme.muted));
+                    } else {
+                        spans.push(Span::styled(preview.to_string(), theme.base));
+                        if form.notes.lines().count() > 1 {
+                            spans.push(Span::styled(" …", theme.muted));
+                        }
+                        spans.push(Span::styled("  (Enter edits)", theme.muted));
+                    }
+                }
+            }
+            Line::from(spans)
+        })
+        .collect();
+    let title = if form.uid.is_some() {
+        " Edit task "
+    } else {
+        " Add task "
+    };
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .style(theme.base)
+            .block(block(theme, title, true)),
+        popup,
+    );
+}
+
 fn hints(pairs: &[(&str, &str)], theme: &Theme) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
     for (key, label) in pairs {
@@ -624,11 +730,14 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
         ("Tab", "switch pane"),
         ("Enter", "open the task, or focus the task list"),
         ("J / K", "scroll the open task"),
-        ("a", "add: title due:fri 09:00 pri:H +tag @project"),
+        (
+            "a",
+            "add in a form; the title takes due:fri pri:H +tag @project",
+        ),
         ("d", "done / reopen (recurring tasks: on the phone)"),
         ("x", "delete, after confirming"),
         ("u", "undo the last change"),
-        ("e / t", "edit the title / the due date"),
+        ("e / t", "edit in a form / edit the due date"),
         ("p / T", "cycle priority / edit tags"),
         ("m / n", "move to a project / edit notes in $EDITOR"),
         ("o", "edit the raw .ics in $EDITOR (the UID must stay)"),

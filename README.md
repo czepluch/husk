@@ -77,11 +77,11 @@ priority and creation time; subtasks sit under their parent.
 | `j` `k` `g` `G` | move, first, last (arrows work too) |
 | `Tab` | switch pane |
 | `Enter` | open the task; in the left pane, focus the list |
-| `a` | add: `Book dentist due:fri 09:00 pri:H +health @life` |
+| `a` | add in a form; the title still takes `Book dentist due:fri 09:00 pri:H +health @life` |
 | `d` | done, or reopen (recurring tasks are completed on the phone) |
 | `x` | delete, after `y/n` |
 | `u` | undo the last change (the bar says `(u undo)` when it applies) |
-| `e` `t` `p` `T` | edit the title, the due date, cycle priority, edit tags |
+| `e` `t` `p` `T` | edit in a form; edit the due date, cycle priority, edit tags |
 | `m` | move to another list |
 | `n` `o` | edit the notes, or the raw `.ics`, in `$EDITOR` |
 | `/` | filter by text; `Enter` keeps it, `Esc` clears it |

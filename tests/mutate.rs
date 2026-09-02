@@ -10,7 +10,7 @@ use husk::config::Config;
 use husk::ical::vtodo;
 use husk::store::VdirStore;
 use husk::theme::Theme;
-use husk::ui::app::{App, EditorRequest, Mode};
+use husk::ui::app::{App, EditorRequest, EditorTarget, Mode};
 use husk::ui::{self, views};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -65,7 +65,7 @@ fn ctrl(code: KeyCode) -> KeyEvent {
 }
 
 fn buffer(app: &App) -> String {
-    app.input.as_ref().expect("an open prompt").buffer.clone()
+    app.form.as_ref().expect("an open form").title.clone()
 }
 
 fn clear_input(app: &mut App) {
@@ -233,21 +233,21 @@ fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
     s.app.view_index = 5;
     assert_eq!(s.app.view_name(&s.app.view()), "Life");
     s.app.handle_key(key('a'));
-    assert_eq!(s.app.mode, Mode::Input);
+    assert_eq!(s.app.mode, Mode::Form);
     let empty = render(&s.app);
     assert!(
-        empty.contains("add> ▌  title due:tomorrow"),
-        "placeholder while empty:\n{empty}"
+        empty.contains(" Add task ") && empty.contains("works here"),
+        "grammar hint while the title is empty:\n{empty}"
     );
     type_text(&mut s.app, "Call bank due:tomorrow 09:00 +money pri:h");
     let typing = render(&s.app);
     assert!(
-        typing.contains("add> Call bank due:tomorrow 09:00 +money pri:h▌"),
+        typing.contains("Call bank due:tomorrow 09:00 +money pri:h▌"),
         "{typing}"
     );
     assert!(
-        !typing.contains("title due:tomorrow"),
-        "placeholder gone once typing starts:\n{typing}"
+        !typing.contains("works here"),
+        "hint gone once typing starts:\n{typing}"
     );
     s.app.handle_key(code(KeyCode::Enter));
     assert_eq!(s.app.message.as_deref(), Some("Added: Call bank (u undo)"));
@@ -280,65 +280,66 @@ fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
 }
 
 #[test]
-fn a_needs_a_project_and_honours_overrides() {
+fn a_preselects_a_project_and_honours_overrides() {
     let mut s = sample();
     s.app.view_index = 1;
     s.app.handle_key(key('a'));
     type_text(&mut s.app, "No home");
-    s.app.handle_key(code(KeyCode::Enter));
-    assert!(
-        s.app
-            .message
-            .as_deref()
-            .unwrap()
-            .contains("default_project"),
-        "{:?}",
-        s.app.message
-    );
-    assert!(find_file(&s, "life", "No home").is_none());
-    assert_eq!(s.app.mode, Mode::Input, "a failed prompt stays open");
     let screen = render(&s.app);
     assert!(
-        screen.contains("default_project"),
-        "the reason is visible while the prompt is open:\n{screen}"
+        screen.contains("< Argot >"),
+        "no view project and no default_project: the first project is preselected:\n{screen}"
     );
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(
+        find_file(&s, "argot", "SUMMARY:No home").is_some(),
+        "lands in the project the form showed"
+    );
+
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "With override @life");
+    s.app.handle_key(code(KeyCode::Enter));
+    let text = find_file(&s, "life", "SUMMARY:With override").expect("@project wins");
+    assert!(!text.contains("VALARM"), "no due, no alarm:\n{text}");
+
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "Chosen by selector");
+    for _ in 0..4 {
+        s.app.handle_key(code(KeyCode::Tab));
+    }
+    s.app.handle_key(code(KeyCode::Right));
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(
+        find_file(&s, "life", "SUMMARY:Chosen by selector").is_some(),
+        "the selector picks the second project"
+    );
+
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "Nowhere @nosuch");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(s.app.message.as_deref().unwrap().contains("nosuch"));
+    assert_eq!(s.app.mode, Mode::Form, "a failed form stays open");
+    let screen = render(&s.app);
     assert!(
         screen
             .lines()
             .last()
             .unwrap()
             .trim_end()
-            .ends_with("default_project"),
-        "at the right end of the bar, not under the cursor:\n{screen}"
+            .ends_with("nosuch\""),
+        "the reason sits at the right end of the bar:\n{screen}"
     );
     s.app.handle_key(code(KeyCode::Esc));
+    assert_eq!(s.app.mode, Mode::Normal);
 
+    let mut s = sample_with(|c| c.default_project = Some("Life".to_string()));
+    s.app.view_index = 1;
     s.app.handle_key(key('a'));
-    type_text(&mut s.app, "With override @argot");
+    type_text(&mut s.app, "Config default");
     s.app.handle_key(code(KeyCode::Enter));
-    assert!(find_file(&s, "argot", "SUMMARY:With override").is_some());
-    let text = find_file(&s, "argot", "SUMMARY:With override").unwrap();
-    assert!(!text.contains("VALARM"), "no due, no alarm:\n{text}");
-
-    s.app.handle_key(key('a'));
-    type_text(&mut s.app, "Nowhere @nosuch");
-    s.app.handle_key(code(KeyCode::Enter));
-    assert!(s.app.message.as_deref().unwrap().contains("nosuch"));
-    s.app.handle_key(code(KeyCode::Esc));
-
-    s.app.handle_key(key('a'));
-    type_text(&mut s.app, "   ");
-    s.app.handle_key(code(KeyCode::Enter));
-    assert!(s.app.message.as_deref().unwrap().contains("title"));
-    s.app.handle_key(code(KeyCode::Esc));
-
-    let mut d = sample_with(|c| c.default_project = Some("Life".to_string()));
-    d.app.handle_key(key('a'));
-    type_text(&mut d.app, "By default");
-    d.app.handle_key(code(KeyCode::Enter));
     assert!(
-        find_file(&d, "life", "SUMMARY:By default").is_some(),
-        "display name resolves"
+        find_file(&s, "life", "SUMMARY:Config default").is_some(),
+        "default_project preselected"
     );
 }
 
@@ -348,7 +349,7 @@ fn e_t_p_and_upper_t_edit_the_selected_task() {
     select(&mut s.app, TEST_TASK);
 
     s.app.handle_key(key('e'));
-    assert_eq!(s.app.input.as_ref().unwrap().buffer, "Test task");
+    assert_eq!(buffer(&s.app), "Test task");
     for _ in 0..4 {
         s.app.handle_key(code(KeyCode::Backspace));
     }
@@ -460,9 +461,8 @@ fn notes_go_through_the_editor_request_and_apply_notes() {
     assert_eq!(
         s.app.take_editor_request(),
         Some(EditorRequest {
-            uid: TEST_TASK.to_string(),
             text: String::new(),
-            raw: false
+            target: EditorTarget::Notes(TEST_TASK.to_string())
         })
     );
     assert_eq!(s.app.take_editor_request(), None, "taken once");
@@ -558,11 +558,7 @@ fn actions_work_from_the_detail_view_and_return_to_it() {
     s.app.handle_key(code(KeyCode::Enter));
     assert_eq!(s.app.mode, Mode::Detail);
     s.app.handle_key(key('e'));
-    assert_eq!(s.app.mode, Mode::Input);
-    assert!(
-        render(&s.app).contains("Summary"),
-        "detail stays behind the prompt"
-    );
+    assert_eq!(s.app.mode, Mode::Form);
     type_text(&mut s.app, "!");
     s.app.handle_key(code(KeyCode::Enter));
     assert_eq!(s.app.mode, Mode::Detail);
@@ -584,9 +580,9 @@ fn a_phone_edit_synced_in_between_is_never_overwritten() {
 
     s.app.handle_key(key('e'));
     assert_eq!(
-        s.app.input.as_ref().unwrap().buffer,
+        buffer(&s.app),
         "Test task",
-        "the prompt shows what was loaded"
+        "the form shows what was loaded"
     );
     type_text(&mut s.app, "!");
     s.app.handle_key(code(KeyCode::Enter));
@@ -827,17 +823,14 @@ fn undoing_a_move_keeps_the_task_when_the_way_back_is_gone() {
 }
 
 #[test]
-fn a_failed_prompt_keeps_its_text() {
+fn a_failed_form_keeps_its_text() {
     let mut s = sample();
     s.app.view_index = 5;
     s.app.handle_key(key('a'));
     type_text(&mut s.app, "reply to @jacob about lunch");
     s.app.handle_key(code(KeyCode::Enter));
-    assert_eq!(s.app.mode, Mode::Input);
-    assert_eq!(
-        s.app.input.as_ref().unwrap().buffer,
-        "reply to @jacob about lunch"
-    );
+    assert_eq!(s.app.mode, Mode::Form);
+    assert_eq!(buffer(&s.app), "reply to @jacob about lunch");
     assert!(s.app.message.as_deref().unwrap().contains("jacob"));
     for _ in 0..18 {
         s.app.handle_key(code(KeyCode::Backspace));
@@ -877,7 +870,7 @@ fn o_edits_the_raw_file_through_the_store() {
     select(&mut s.app, TEST_TASK);
     s.app.handle_key(key('o'));
     let request = s.app.take_editor_request().unwrap();
-    assert!(request.raw);
+    assert!(matches!(request.target, EditorTarget::Raw(ref uid) if uid == TEST_TASK));
     assert_eq!(request.text, file(&s, "life/no-due.ics"));
 
     let edited = request
@@ -1004,69 +997,47 @@ fn messages_set_from_outside_a_key_press_still_fade_correctly() {
 fn typed_text_in_prompts_uses_the_normal_foreground_not_the_muted_bar_color() {
     let theme = Theme::load("phosphor", None).unwrap();
     let mut s = sample();
-    s.app.view_index = 5;
-    s.app.handle_key(key('a'));
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('t'));
     let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
     terminal.draw(|f| views::draw(f, &s.app, &theme)).unwrap();
-    let placeholder_cell = |t: &Terminal<TestBackend>| {
+    let cell_style = |t: &Terminal<TestBackend>, needle: &str| {
         let text = screen(t);
         let (y, line) = text
             .lines()
             .enumerate()
-            .find(|(_, l)| l.contains("title due:tomorrow"))
-            .unwrap();
-        let x = line[..line.find("title due").unwrap()].chars().count();
+            .find(|(_, l)| l.contains(needle))
+            .unwrap_or_else(|| panic!("{needle:?} not on screen:\n{text}"));
+        let x = line[..line.find(needle).unwrap()].chars().count();
         t.backend()
             .buffer()
-            .cell((x as u16, y as u16))
+            .cell((u16::try_from(x).unwrap(), u16::try_from(y).unwrap()))
             .unwrap()
             .style()
     };
     assert_eq!(
-        placeholder_cell(&terminal).fg,
+        cell_style(&terminal, "today | fri").fg,
         theme.muted.fg,
         "placeholder is muted"
     );
 
-    type_text(&mut s.app, "Buy milk");
+    type_text(&mut s.app, "2026-09-04");
     terminal.draw(|f| views::draw(f, &s.app, &theme)).unwrap();
-    let text = screen(&terminal);
-    let (y, line) = text
-        .lines()
-        .enumerate()
-        .find(|(_, l)| l.contains("Buy milk"))
-        .unwrap();
-    let x = line[..line.find("Buy milk").unwrap()].chars().count();
-    let typed = terminal
-        .backend()
-        .buffer()
-        .cell((x as u16, y as u16))
-        .unwrap()
-        .style();
     assert_eq!(
-        typed.fg, theme.base.fg,
+        cell_style(&terminal, "2026-09-04").fg,
+        theme.base.fg,
         "typed text is the normal foreground"
     );
-    assert_ne!(typed.fg, theme.muted.fg);
 
     s.app.handle_key(code(KeyCode::Esc));
-    s.app.handle_key(key('/'));
-    type_text(&mut s.app, "milk");
+    s.app.handle_key(key('e'));
+    type_text(&mut s.app, "!");
     terminal.draw(|f| views::draw(f, &s.app, &theme)).unwrap();
-    let text = screen(&terminal);
-    let (y, line) = text
-        .lines()
-        .enumerate()
-        .find(|(_, l)| l.starts_with(" /milk"))
-        .unwrap();
-    let x = line.find("milk").unwrap();
-    let typed = terminal
-        .backend()
-        .buffer()
-        .cell((x as u16, y as u16))
-        .unwrap()
-        .style();
-    assert_eq!(typed.fg, theme.base.fg, "filter text too");
+    assert_eq!(
+        cell_style(&terminal, "Test task!").fg,
+        theme.base.fg,
+        "form text is the normal foreground"
+    );
 }
 
 #[test]
@@ -1130,4 +1101,75 @@ fn the_filter_edits_at_a_cursor_and_reopens_with_it_at_the_end() {
     assert_eq!(s.app.filter, "oils", "reopening puts the cursor at the end");
     s.app.handle_key(code(KeyCode::Esc));
     assert!(s.app.filter.is_empty());
+}
+
+#[test]
+fn the_form_edits_every_field_and_esc_discards() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('e'));
+    assert_eq!(s.app.mode, Mode::Form);
+    assert!(render(&s.app).contains(" Edit task "));
+    type_text(&mut s.app, "!");
+    s.app.handle_key(code(KeyCode::Tab));
+    type_text(&mut s.app, "fri 10:00");
+    s.app.handle_key(code(KeyCode::Tab));
+    s.app.handle_key(code(KeyCode::Right));
+    s.app.handle_key(code(KeyCode::Tab));
+    type_text(&mut s.app, "home, #urgent");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Normal);
+    let text = file(&s, "life/no-due.ics");
+    assert!(text.contains("SUMMARY:Test task!\n"), "{text}");
+    let due = format!("{}\n", due_line(2026, 9, 4, 10, 0));
+    assert!(text.contains(&due), "{text}");
+    assert!(text.contains("PRIORITY:1\n"), "{text}");
+    assert!(text.contains("CATEGORIES:home,urgent\n"), "{text}");
+    assert_eq!(text.matches("BEGIN:VALARM").count(), 1, "{text}");
+    assert_eq!(s.app.message.as_deref(), Some("Saved: Test task! (u undo)"));
+
+    s.app.handle_key(key('e'));
+    type_text(&mut s.app, " discarded");
+    s.app.handle_key(code(KeyCode::Esc));
+    assert_eq!(s.app.mode, Mode::Normal);
+    assert!(
+        file(&s, "life/no-due.ics").contains("SUMMARY:Test task!\n"),
+        "Esc changes nothing"
+    );
+
+    s.app.handle_key(key('e'));
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(
+        s.app.message.as_deref(),
+        None,
+        "saving untouched fields changes nothing"
+    );
+    assert!(
+        file(&s, "life/no-due.ics").contains(&due),
+        "due survives a no-op save"
+    );
+}
+
+#[test]
+fn the_form_notes_row_goes_through_the_editor() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('e'));
+    for _ in 0..5 {
+        s.app.handle_key(code(KeyCode::Tab));
+    }
+    s.app.handle_key(code(KeyCode::Enter));
+    let request = s.app.take_editor_request().unwrap();
+    assert_eq!(request.target, EditorTarget::FormNotes);
+    assert_eq!(request.text, "");
+    s.app.set_form_notes("From the editor\nsecond line\n");
+    assert_eq!(s.app.mode, Mode::Form, "the form stays open");
+    assert!(render(&s.app).contains("From the editor"));
+    s.app.handle_key(code(KeyCode::BackTab));
+    s.app.handle_key(code(KeyCode::Enter));
+    let text = file(&s, "life/no-due.ics");
+    assert!(
+        text.contains("DESCRIPTION:From the editor\\nsecond line\n"),
+        "{text}"
+    );
 }

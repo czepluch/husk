@@ -5,6 +5,13 @@ Keep a Changelog.
 
 ## Unreleased
 
+- Adding and editing tasks happens in a popup form: title (the quick-add
+  grammar still works there and wins over the fields), due, priority,
+  tags, project and notes, with `$EDITOR` behind the notes row. `a` and
+  `e` open it; `t`, `T` and `p` stay as single-field shortcuts. A new
+  task starts in the visible project, else `default_project`, else the
+  first list.
+
 - Prompts and the filter got a movable cursor: arrows (Ctrl jumps a
   word), Home/End, Delete, and typing inserts at the cursor, instead of
   append and backspace only.
