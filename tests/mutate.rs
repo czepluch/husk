@@ -1173,3 +1173,117 @@ fn the_form_notes_row_goes_through_the_editor() {
         "{text}"
     );
 }
+
+#[test]
+fn a_title_only_form_edit_preserves_grammar_lookalikes_and_odd_seconds() {
+    use chrono::Timelike;
+    let mut s = sample();
+    let uid = s
+        .app
+        .tasks
+        .iter()
+        .find(|t| matches!(t.due, Some(husk::model::Due::DateTime(d)) if d.second() != 0))
+        .expect("a task with odd seconds in its due")
+        .uid
+        .clone();
+    select(&mut s.app, &uid);
+    s.app.handle_key(key('e'));
+    type_text(&mut s.app, "!");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Normal, "{:?}", s.app.message);
+    assert!(
+        find_file(&s, "argot", "0001").is_some(),
+        "the due's odd seconds survive a title-only edit"
+    );
+
+    let raw = file(&s, "life/no-due.ics")
+        .replace("SUMMARY:Test task", "SUMMARY:Lunch with @nina and +Jens");
+    s.app.apply_raw(TEST_TASK, &raw);
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('e'));
+    s.app.handle_key(code(KeyCode::Tab));
+    s.app.handle_key(code(KeyCode::Tab));
+    s.app.handle_key(code(KeyCode::Right));
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Normal, "{:?}", s.app.message);
+    let text = file(&s, "life/no-due.ics");
+    assert!(
+        text.contains("SUMMARY:Lunch with @nina and +Jens\n"),
+        "an untouched title is never fed to the grammar:\n{text}"
+    );
+    assert!(text.contains("PRIORITY:1\n"), "{text}");
+}
+
+#[test]
+fn grammar_tokens_in_an_edited_title_win_over_the_fields() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('e'));
+    type_text(&mut s.app, " due:2026-09-10");
+    s.app.handle_key(code(KeyCode::Tab));
+    type_text(&mut s.app, "2026-09-12");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Normal, "{:?}", s.app.message);
+    let text = file(&s, "life/no-due.ics");
+    assert!(text.contains("DUE;VALUE=DATE:20260910\n"), "{text}");
+    assert!(
+        text.contains("SUMMARY:Test task\n"),
+        "the token leaves the title:\n{text}"
+    );
+}
+
+#[test]
+fn a_form_save_that_moves_projects_is_one_undo_step() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('e'));
+    type_text(&mut s.app, "!");
+    for _ in 0..4 {
+        s.app.handle_key(code(KeyCode::Tab));
+    }
+    s.app.handle_key(code(KeyCode::Left));
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.message.as_deref(), Some("Saved: Test task! (u undo)"));
+    assert!(
+        find_file(&s, "argot", "SUMMARY:Test task!").is_some(),
+        "edited and moved in one save"
+    );
+    assert!(find_file(&s, "life", "SUMMARY:Test task").is_none());
+    s.app.handle_key(key('u'));
+    assert!(
+        find_file(&s, "life", "SUMMARY:Test task\n").is_some(),
+        "one undo restores the fields and the project"
+    );
+    assert!(find_file(&s, "argot", "Test task").is_none());
+}
+
+#[test]
+fn a_clamped_focus_move_keeps_the_cursor_and_long_titles_scroll() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('e'));
+    for _ in 0..3 {
+        s.app.handle_key(code(KeyCode::Left));
+    }
+    s.app.handle_key(code(KeyCode::Up));
+    type_text(&mut s.app, "X");
+    assert_eq!(
+        buffer(&s.app),
+        "Test tXask",
+        "Up on the top row must not move the cursor"
+    );
+    s.app.handle_key(code(KeyCode::Esc));
+
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, &"x".repeat(60));
+    let screen = render(&s.app);
+    assert!(
+        screen.contains(&format!("{}▌", "x".repeat(48))),
+        "the window keeps the cursor visible:\n{screen}"
+    );
+    assert!(
+        !screen.contains(&"x".repeat(49)),
+        "clipped on the left, not the right:\n{screen}"
+    );
+    s.app.handle_key(code(KeyCode::Esc));
+}

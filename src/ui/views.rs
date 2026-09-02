@@ -659,10 +659,11 @@ fn draw_form(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                         _ => &form.tags,
                     };
                     if focused {
-                        let (before, after) = text.split_at(byte_of(text, form.cursor));
-                        spans.push(Span::styled(before.to_string(), theme.base));
+                        let budget = usize::from(width).saturating_sub(15);
+                        let (before, after) = window(text, form.cursor, budget);
+                        spans.push(Span::styled(before, theme.base));
                         spans.push(Span::styled("▌", theme.accent));
-                        spans.push(Span::styled(after.to_string(), theme.base));
+                        spans.push(Span::styled(after, theme.base));
                     } else {
                         spans.push(Span::styled(text.clone(), theme.base));
                     }
@@ -713,6 +714,20 @@ fn draw_form(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             .block(block(theme, title, true)),
         popup,
     );
+}
+
+/// A window of `width` characters around the cursor, split at it, so a
+/// long value scrolls instead of pushing the cursor out of the popup.
+fn window(text: &str, cursor: usize, width: usize) -> (String, String) {
+    let chars: Vec<char> = text.chars().collect();
+    let cursor = cursor.min(chars.len());
+    let width = width.max(8);
+    let start = (cursor + 1).saturating_sub(width);
+    let end = (start + width).min(chars.len());
+    (
+        chars[start..cursor].iter().collect(),
+        chars[cursor..end].iter().collect(),
+    )
 }
 
 fn hints(pairs: &[(&str, &str)], theme: &Theme) -> Line<'static> {

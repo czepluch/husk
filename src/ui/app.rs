@@ -81,8 +81,8 @@ pub struct Input {
     pub cursor: usize,
     /// What the buffer started as; an unchanged prompt changes nothing.
     pub initial: String,
-    /// The task being edited; none for quick add.
-    pub uid: Option<String>,
+    /// The task being edited.
+    pub uid: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,6 +111,12 @@ pub struct Form {
     /// The task being edited; none when adding.
     pub uid: Option<String>,
     pub title: String,
+    /// What the title started as; an untouched title is never fed to the
+    /// quick-add grammar, so `@` or `+` words in it survive a save.
+    initial_title: String,
+    /// The task as the form opened it; the save is refused when the task
+    /// changed underneath in the meantime (a sync, an editor).
+    original: Option<Box<Task>>,
     pub due: String,
     /// What the due field started as; unchanged text leaves the task's
     /// due date alone, so a re-parse cannot shave off odd seconds.
@@ -132,7 +138,11 @@ impl Form {
             .iter()
             .position(|f| *f == self.field)
             .unwrap_or(0);
-        self.field = FORM_FIELDS[step(at, delta, FORM_FIELDS.len())];
+        let next = step(at, delta, FORM_FIELDS.len());
+        if next == at {
+            return;
+        }
+        self.field = FORM_FIELDS[next];
         self.cursor = self.text().map_or(0, |t| t.chars().count());
     }
 
@@ -507,13 +517,13 @@ impl App {
             KeyCode::Char('t') => {
                 if let Some(task) = self.selected_task() {
                     let (uid, text) = (task.uid.clone(), due_input(task.due, &self.config));
-                    self.start_input(InputKind::Due, text, Some(uid));
+                    self.start_input(InputKind::Due, text, uid);
                 }
             }
             KeyCode::Char('T') => {
                 if let Some(task) = self.selected_task() {
                     let (uid, text) = (task.uid.clone(), task.tags.join(", "));
-                    self.start_input(InputKind::Tags, text, Some(uid));
+                    self.start_input(InputKind::Tags, text, uid);
                 }
             }
             KeyCode::Char('p') => self.cycle_priority(),
@@ -557,7 +567,7 @@ impl App {
         self.mode = Mode::Help;
     }
 
-    fn start_input(&mut self, kind: InputKind, buffer: String, uid: Option<String>) {
+    fn start_input(&mut self, kind: InputKind, buffer: String, uid: String) {
         self.input = Some(Input {
             kind,
             initial: buffer.clone(),
@@ -655,8 +665,9 @@ impl App {
         if input.buffer == input.initial {
             return Ok(String::new());
         }
-        match (input.kind, &input.uid) {
-            (InputKind::Due, Some(uid)) => {
+        let uid = &input.uid;
+        match input.kind {
+            InputKind::Due => {
                 let text = input.buffer.trim();
                 let due = if text.is_empty() {
                     None
@@ -684,14 +695,13 @@ impl App {
                     Ok(())
                 })
             }
-            (InputKind::Tags, Some(uid)) => {
+            InputKind::Tags => {
                 let tags = split_tags(&input.buffer);
                 self.change(uid, "Tags set", |task| {
                     task.tags = tags;
                     Ok(())
                 })
             }
-            (_, None) => Err(anyhow!("no task selected")),
         }
     }
 
@@ -703,6 +713,8 @@ impl App {
                 Form {
                     uid: Some(task.uid.clone()),
                     title: task.summary.clone(),
+                    initial_title: task.summary.clone(),
+                    original: Some(Box::new(task.clone())),
                     initial_due: due.clone(),
                     due,
                     priority: task.priority,
@@ -720,6 +732,8 @@ impl App {
             None => Form {
                 uid: None,
                 title: String::new(),
+                initial_title: String::new(),
+                original: None,
                 due: String::new(),
                 initial_due: String::new(),
                 priority: Priority::None,
@@ -807,7 +821,14 @@ impl App {
     /// being edited. Grammar tokens typed in the title (`due:`, `pri:`,
     /// `+tag`, `@project`) win over the corresponding fields.
     fn form_submit(&mut self, form: &Form) -> Result<String> {
-        let parsed = quickadd::parse(&form.title, self.now);
+        let parsed = if form.title == form.initial_title {
+            quickadd::QuickAdd {
+                summary: form.title.trim().to_string(),
+                ..quickadd::QuickAdd::default()
+            }
+        } else {
+            quickadd::parse(&form.title, self.now)
+        };
         if parsed.summary.is_empty() {
             return Err(anyhow!("a task needs a title"));
         }
@@ -866,39 +887,66 @@ impl App {
             }
             Some(uid) => {
                 let uid = uid.clone();
-                let summary = parsed.summary;
-                let changed = self.change(&uid, "Saved", move |task| {
-                    task.summary = summary;
-                    task.priority = priority;
-                    task.tags = tags;
-                    task.description = (!notes.is_empty()).then_some(notes);
-                    if due_touched && task.due != due {
-                        task.due = due;
-                        match due {
-                            // A timed due notifies on the phones only
-                            // through an alarm.
-                            Some(Due::DateTime(_)) if task.alarms.is_empty() => {
-                                task.alarms = default_alarms(&leads);
-                            }
-                            // Relative alarms have nothing left to count from.
-                            None => task
-                                .alarms
-                                .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
-                            _ => {}
+                let current = self
+                    .tasks
+                    .iter()
+                    .find(|t| t.uid == uid)
+                    .cloned()
+                    .with_context(|| format!("task {uid} is no longer listed"))?;
+                if form.original.as_ref().is_some_and(|o| o.raw != current.raw) {
+                    anyhow::bail!("task changed since the form opened; press Esc and reopen");
+                }
+                let before = current.clone();
+                let mut task = current;
+                task.summary = parsed.summary;
+                task.priority = priority;
+                task.tags = tags;
+                task.description = (!notes.is_empty()).then_some(notes);
+                if due_touched && task.due != due {
+                    task.due = due;
+                    match due {
+                        // A timed due notifies on the phones only through
+                        // an alarm.
+                        Some(Due::DateTime(_)) if task.alarms.is_empty() => {
+                            task.alarms = default_alarms(&leads);
                         }
+                        // Relative alarms have nothing left to count from.
+                        None => task
+                            .alarms
+                            .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
+                        _ => {}
                     }
-                    Ok(())
-                })?;
-                let moved = self.move_task_to(&uid, &project)?;
-                Ok(if changed.is_empty() { moved } else { changed })
+                }
+                if let Err(e) = self.store.save(&mut task) {
+                    self.reload();
+                    return Err(e);
+                }
+                let changed = task.raw != before.raw;
+                let moved = task.project != project;
+                if moved && let Err(e) = self.store.move_to(&uid, &project) {
+                    // The field edits are on disk already; cover them.
+                    if changed {
+                        self.push_undo(Undo::Restore(Box::new(before)));
+                        self.after_write(Some(&uid));
+                    }
+                    return Err(e);
+                }
+                if !changed && !moved {
+                    return Ok(String::new());
+                }
+                let summary = task.summary.clone();
+                self.push_undo(Undo::Restore(Box::new(before)));
+                self.after_write(Some(&uid));
+                Ok(format!("Saved: {summary} (u undo)"))
             }
         }
     }
 
     /// Notes back from `$EDITOR` into the open form.
     pub fn set_form_notes(&mut self, text: &str) {
-        if let Some(form) = &mut self.form {
-            form.notes = text.trim_end().to_string();
+        match &mut self.form {
+            Some(form) => form.notes = text.trim_end().to_string(),
+            None => self.notify("The form closed; the edited notes were dropped".to_string()),
         }
     }
     fn toggle_done(&mut self) {
