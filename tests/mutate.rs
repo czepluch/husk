@@ -827,12 +827,12 @@ fn a_failed_form_keeps_its_text() {
     let mut s = sample();
     s.app.view_index = 5;
     s.app.handle_key(key('a'));
-    type_text(&mut s.app, "reply to @jacob about lunch");
+    type_text(&mut s.app, "reply to @nina about lunch");
     s.app.handle_key(code(KeyCode::Enter));
     assert_eq!(s.app.mode, Mode::Form);
-    assert_eq!(buffer(&s.app), "reply to @jacob about lunch");
-    assert!(s.app.message.as_deref().unwrap().contains("jacob"));
-    for _ in 0..18 {
+    assert_eq!(buffer(&s.app), "reply to @nina about lunch");
+    assert!(s.app.message.as_deref().unwrap().contains("nina"));
+    for _ in 0..17 {
         s.app.handle_key(code(KeyCode::Backspace));
     }
     type_text(&mut s.app, "about lunch");
