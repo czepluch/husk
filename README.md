@@ -22,6 +22,13 @@ itself. Every property it does not understand is preserved byte for byte, so
 Apple and Tasks.org metadata survives an edit here, and their edits survive a
 sync. The full design is in `docs/spec.md`.
 
+## Status
+
+A personal tool, built for one setup and shared in case it fits yours. It
+is in daily use, and the interop with Apple Reminders and Tasks.org is
+pinned by tests over real files those apps wrote. No stability promises
+yet: expect rough edges, and pin a release if you depend on it.
+
 ## Install
 
 Each release carries Linux x86_64 binaries: a `linux-gnu` build and a static
