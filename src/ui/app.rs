@@ -131,18 +131,14 @@ pub struct Form {
 }
 
 impl Form {
-    /// Moves focus by `delta` through the fields and puts the cursor at
-    /// the end of the newly focused text.
+    /// Moves focus by `delta` through the fields, wrapping past either
+    /// end, and puts the cursor at the end of the newly focused text.
     fn focus(&mut self, delta: isize) {
         let at = FORM_FIELDS
             .iter()
             .position(|f| *f == self.field)
             .unwrap_or(0);
-        let next = step(at, delta, FORM_FIELDS.len());
-        if next == at {
-            return;
-        }
-        self.field = FORM_FIELDS[next];
+        self.field = FORM_FIELDS[step_wrap(at, delta, FORM_FIELDS.len())];
         self.cursor = self.text().map_or(0, |t| t.chars().count());
     }
 
@@ -638,10 +634,10 @@ impl App {
     fn pick_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
-                self.pick_index = step(self.pick_index, 1, self.projects.len());
+                self.pick_index = step_wrap(self.pick_index, 1, self.projects.len());
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.pick_index = step(self.pick_index, -1, self.projects.len());
+                self.pick_index = step_wrap(self.pick_index, -1, self.projects.len());
             }
             KeyCode::Enter => {
                 self.mode = self.return_to;
@@ -798,10 +794,11 @@ impl App {
                     _ => {}
                 },
                 FormField::Project => match key.code {
-                    KeyCode::Left => form.project = form.project.saturating_sub(1),
-                    KeyCode::Right => {
-                        form.project =
-                            (form.project + 1).min(self.projects.len().saturating_sub(1));
+                    KeyCode::Left => {
+                        form.project = step_wrap(form.project, -1, self.projects.len());
+                    }
+                    KeyCode::Right | KeyCode::Char(' ') => {
+                        form.project = step_wrap(form.project, 1, self.projects.len());
                     }
                     _ => {}
                 },
@@ -1358,6 +1355,19 @@ fn split_tags(text: &str) -> Vec<String> {
 fn plain(key: KeyEvent) -> bool {
     !key.modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+}
+
+/// `step`, but past either end it comes out on the other side. For short
+/// selectors; long lists clamp.
+fn step_wrap(index: usize, delta: isize, len: usize) -> usize {
+    let Ok(len) = isize::try_from(len) else {
+        return index;
+    };
+    if len == 0 {
+        return 0;
+    }
+    let current = isize::try_from(index).unwrap_or(0).min(len - 1);
+    usize::try_from(current.saturating_add(delta).rem_euclid(len)).unwrap_or(0)
 }
 
 fn step(index: usize, delta: isize, len: usize) -> usize {

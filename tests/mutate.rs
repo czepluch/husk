@@ -10,7 +10,7 @@ use husk::config::Config;
 use husk::ical::vtodo;
 use husk::store::VdirStore;
 use husk::theme::Theme;
-use husk::ui::app::{App, EditorRequest, EditorTarget, Mode};
+use husk::ui::app::{App, EditorRequest, EditorTarget, FormField, Mode};
 use husk::ui::{self, views};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -1258,20 +1258,38 @@ fn a_form_save_that_moves_projects_is_one_undo_step() {
 }
 
 #[test]
-fn a_clamped_focus_move_keeps_the_cursor_and_long_titles_scroll() {
+fn selectors_wrap_and_long_titles_scroll() {
     let mut s = sample();
     select(&mut s.app, TEST_TASK);
     s.app.handle_key(key('e'));
-    for _ in 0..3 {
-        s.app.handle_key(code(KeyCode::Left));
-    }
     s.app.handle_key(code(KeyCode::Up));
-    type_text(&mut s.app, "X");
-    assert_eq!(
-        buffer(&s.app),
-        "Test tXask",
-        "Up on the top row must not move the cursor"
+    assert_eq!(form_field(&s.app), FormField::Notes, "focus wraps upward");
+    s.app.handle_key(code(KeyCode::Tab));
+    assert_eq!(form_field(&s.app), FormField::Title, "and back around");
+    for _ in 0..4 {
+        s.app.handle_key(code(KeyCode::Tab));
+    }
+    assert_eq!(form_field(&s.app), FormField::Project);
+    s.app.handle_key(code(KeyCode::Right));
+    s.app.handle_key(code(KeyCode::Right));
+    assert!(
+        render(&s.app).contains("< Argot >"),
+        "life, solidity, then around to the first project"
     );
+    s.app.handle_key(code(KeyCode::Char(' ')));
+    assert!(
+        render(&s.app).contains("< Life >"),
+        "space cycles like priority"
+    );
+    s.app.handle_key(code(KeyCode::Esc));
+
+    s.app.handle_key(key('m'));
+    assert_eq!(s.app.pick_index, 1, "the task's own project");
+    s.app.handle_key(key('k'));
+    s.app.handle_key(key('k'));
+    assert_eq!(s.app.pick_index, 2, "the picker wraps upward");
+    s.app.handle_key(key('j'));
+    assert_eq!(s.app.pick_index, 0, "and downward");
     s.app.handle_key(code(KeyCode::Esc));
 
     s.app.handle_key(key('a'));
@@ -1286,4 +1304,8 @@ fn a_clamped_focus_move_keeps_the_cursor_and_long_titles_scroll() {
         "clipped on the left, not the right:\n{screen}"
     );
     s.app.handle_key(code(KeyCode::Esc));
+}
+
+fn form_field(app: &App) -> FormField {
+    app.form.as_ref().expect("an open form").field
 }

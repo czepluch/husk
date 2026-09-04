@@ -3,6 +3,12 @@
 Notable changes per release. Versions follow semver; the format follows
 Keep a Changelog.
 
+## Unreleased
+
+- The project picker, the form's field focus and its priority and project
+  rows wrap past either end, and Space cycles the project row the way it
+  cycles priority.
+
 ## 0.2.0 - 2026-09-02
 
 - Adding and editing tasks happens in a popup form: title (the quick-add
