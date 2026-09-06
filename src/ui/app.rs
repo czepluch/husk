@@ -972,10 +972,12 @@ impl App {
     }
 
     /// `d` on a recurring task: the due date moves to the rule's next
-    /// occurrence and the task stays pending, with absolute alarms moved
-    /// along and a counted rule losing one count. Completing the last
-    /// occurrence completes the task itself. A rule the computation does
-    /// not cover is left to the phone apps.
+    /// occurrence and the task stays pending, with absolute alarms keeping
+    /// their wall-clock time and a counted rule losing one count.
+    /// Completing the last occurrence completes the task itself. Wall
+    /// times live in the due's own `TZID` zone when it names one, else
+    /// the local zone. A rule the computation does not cover is left to
+    /// the phone apps.
     fn complete_occurrence(&mut self, uid: &str, rule: &str) {
         let Some(task) = self.tasks.iter().find(|t| t.uid == uid) else {
             return;
@@ -984,9 +986,18 @@ impl App {
             self.notify("No due date to advance; complete it on the phone".to_string());
             return;
         };
+        let zone = vtodo::due_zone(task);
+        let wall = move |at: chrono::DateTime<chrono::Utc>| match zone {
+            Some(tz) => at.with_timezone(&tz).naive_local(),
+            None => at.with_timezone(&Local).naive_local(),
+        };
+        let to_utc = move |wall_time: chrono::NaiveDateTime| match zone {
+            Some(tz) => vtodo::wall_to_utc(&tz, wall_time),
+            None => vtodo::wall_to_utc(&Local, wall_time),
+        };
         let from = match due {
             Due::Date(date) => date,
-            Due::DateTime(at) => at.with_timezone(&Local).date_naive(),
+            Due::DateTime(at) => wall(at).date(),
         };
         match recur::advance(rule, from) {
             recur::Advance::Unsupported => {
@@ -1003,15 +1014,9 @@ impl App {
             recur::Advance::Next { date, rrule } => {
                 let next = match due {
                     Due::Date(_) => Due::Date(date),
-                    Due::DateTime(at) => {
-                        let time = at.with_timezone(&Local).time();
-                        Due::DateTime(vtodo::wall_to_utc(&Local, date.and_time(time)))
-                    }
+                    Due::DateTime(at) => Due::DateTime(to_utc(date.and_time(wall(at).time()))),
                 };
-                let delta = match (due, next) {
-                    (Due::DateTime(a), Due::DateTime(b)) => b - a,
-                    _ => chrono::TimeDelta::days((date - from).num_days()),
-                };
+                let days = date - from;
                 let label = format!(
                     "Done, next {}",
                     due_label(Some(next), self.now, &self.config)
@@ -1023,7 +1028,7 @@ impl App {
                     }
                     for alarm in &mut task.alarms {
                         if let Alarm::Absolute(at) = alarm {
-                            *at += delta;
+                            *at = to_utc(wall(*at) + days);
                         }
                     }
                     Ok(())

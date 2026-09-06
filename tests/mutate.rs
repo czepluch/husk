@@ -1362,3 +1362,31 @@ fn selectors_wrap_and_long_titles_scroll() {
 fn form_field(app: &App) -> FormField {
     app.form.as_ref().expect("an open form").field
 }
+
+#[test]
+fn d_advances_a_timed_due_in_its_own_zone_and_keeps_alarm_wall_time() {
+    let mut s = sample();
+    let raw = file(&s, "life/no-due.ics")
+        .replace(
+            "SUMMARY:Test task",
+            "DUE;TZID=Europe/Copenhagen:20261018T090000\nRRULE:FREQ=WEEKLY\nSUMMARY:Test task",
+        )
+        .replace(
+            "END:VTODO",
+            "BEGIN:VALARM\nACTION:DISPLAY\nDESCRIPTION:Test task\nTRIGGER;VALUE=DATE-TIME:20261018T070000Z\nEND:VALARM\nEND:VTODO",
+        );
+    s.app.apply_raw(TEST_TASK, &raw);
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('d'));
+    let text = file(&s, "life/no-due.ics");
+    assert!(
+        text.contains("DUE;TZID=Europe/Copenhagen:20261025T090000\n"),
+        "the wall time survives the DST end in the due's own zone, whatever TZ is:\n{text}"
+    );
+    assert!(
+        text.contains(":20261025T080000Z\n"),
+        "the alarm keeps its wall time, 09:00 CET:\n{text}"
+    );
+    assert!(text.contains("RRULE:FREQ=WEEKLY\n"), "{text}");
+    assert!(text.contains("STATUS:NEEDS-ACTION\n"), "{text}");
+}

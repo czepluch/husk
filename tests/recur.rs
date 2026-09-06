@@ -277,3 +277,29 @@ fn until_count_and_uncovered_parts_end_or_refuse() {
         assert_eq!(advance(rule, d(2026, 9, 7)), Advance::Unsupported, "{rule}");
     }
 }
+
+#[test]
+fn day_lattice_combinations_and_bad_untils_are_refused() {
+    assert_eq!(
+        advance("FREQ=MONTHLY;BYMONTHDAY=13;BYDAY=FR", d(2026, 9, 13)),
+        Advance::Unsupported,
+        "a Friday-the-13th rule is not guessed at"
+    );
+    assert_eq!(
+        advance("FREQ=WEEKLY;UNTIL=banana", d(2026, 9, 7)),
+        Advance::Unsupported
+    );
+    assert_eq!(
+        describe("FREQ=WEEKLY;UNTIL=banana"),
+        "FREQ=WEEKLY;UNTIL=banana",
+        "an unreadable rule is shown as written"
+    );
+    assert_eq!(
+        advance("FREQ=WEEKLY;COUNT =3", d(2026, 9, 7)),
+        Advance::Next {
+            date: d(2026, 9, 14),
+            rrule: Some("FREQ=WEEKLY;COUNT=2".to_string())
+        },
+        "a spaced key is rewritten all the same"
+    );
+}

@@ -107,6 +107,12 @@ pub fn local_zone() -> Option<Tz> {
     zone_named(env.as_deref(), system.as_deref())
 }
 
+/// The zone of the task's `DUE` `TZID`, when chrono-tz knows it.
+pub fn due_zone(task: &Task) -> Option<Tz> {
+    let due = task.raw.root.child("VTODO")?.prop("DUE")?;
+    Tz::from_str(due.param("TZID")?).ok()
+}
+
 /// `local_zone` for a given `TZ` value and system zone name. A `TZ` that
 /// is a file path or a POSIX rule string is not a zone name and defers to
 /// the system zone.

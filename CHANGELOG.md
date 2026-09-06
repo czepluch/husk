@@ -6,8 +6,8 @@ Keep a Changelog.
 ## Unreleased
 
 - Completing a recurring task moves its due date to the rule's next
-  occurrence and keeps it pending, moving absolute alarms along and
-  counting a COUNT down; the last occurrence completes the task itself.
+  occurrence and keeps it pending, moving absolute alarms along in
+  wall-clock time and counting a COUNT down; the last occurrence completes the task itself.
   Rules the computation cannot cover are still left to the phone apps.
 
 - The project picker, the form's field focus and its priority and project

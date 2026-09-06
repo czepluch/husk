@@ -51,7 +51,7 @@ struct Rule {
     days: Vec<Day>,
     month_day: Option<i32>,
     month: Option<u32>,
-    until: Option<String>,
+    until: Option<NaiveDate>,
     count: Option<u32>,
     /// A `WKST` other than Monday moves week boundaries; describing such
     /// a rule is fine, advancing it is not.
@@ -97,7 +97,7 @@ fn parse(text: &str) -> Option<Rule> {
                 );
             }
             "BYMONTH" => rule.month = Some(value.parse().ok().filter(|n| (1..=12).contains(n))?),
-            "UNTIL" => rule.until = Some(value.trim().to_string()),
+            "UNTIL" => rule.until = Some(until_date(value.trim())?),
             "COUNT" => rule.count = Some(value.parse().ok().filter(|n| *n > 0)?),
             "WKST" => rule.foreign_wkst = !value.trim().eq_ignore_ascii_case("MO"),
             _ => return None,
@@ -118,7 +118,7 @@ fn text(rule: &str) -> Option<String> {
     let days = rule.days;
     let month_day = rule.month_day;
     let month = rule.month;
-    let until = rule.until.as_deref().and_then(format_until);
+    let until = rule.until.map(|date| date.format("%Y-%m-%d").to_string());
     let count = rule.count;
 
     let mut out = String::new();
@@ -222,12 +222,6 @@ fn month_name(m: u32) -> Option<&'static str> {
     .copied()
 }
 
-/// `20260930` or `20260930T215959Z` as `2026-09-30`; a UTC time is shown
-/// as the local date it falls on.
-fn format_until(value: &str) -> Option<String> {
-    Some(until_date(value)?.format("%Y-%m-%d").to_string())
-}
-
 /// The local date an `UNTIL` value names; the rule includes it.
 fn until_date(value: &str) -> Option<NaiveDate> {
     if let Some(utc) = value.strip_suffix('Z')
@@ -266,7 +260,7 @@ pub fn advance(rule: &str, from: NaiveDate) -> Advance {
     let Some(next) = next_date(&parsed, from) else {
         return Advance::Unsupported;
     };
-    if let Some(until) = parsed.until.as_deref().and_then(until_date)
+    if let Some(until) = parsed.until
         && next > until
     {
         return Advance::Ended;
@@ -310,6 +304,12 @@ fn next_date(rule: &Rule, from: NaiveDate) -> Option<NaiveDate> {
             None
         }
         Freq::Monthly if rule.month.is_none() => {
+            // BYMONTHDAY and BYDAY together mean their intersection (a
+            // Friday the 13th); computing that is not worth the risk of a
+            // wrong date reaching the phones.
+            if rule.month_day.is_some() && !rule.days.is_empty() {
+                return None;
+            }
             for step in 0..=48u32 {
                 let (year, month) =
                     shift_month(from.year(), from.month(), step.checked_mul(rule.interval)?)?;
@@ -413,12 +413,11 @@ fn week_start(date: NaiveDate) -> Option<NaiveDate> {
 /// The rule with its `COUNT` replaced, everything else byte for byte.
 fn with_count(rule: &str, count: u32) -> String {
     rule.split(';')
-        .map(|part| {
-            if part.trim().to_ascii_uppercase().starts_with("COUNT=") {
+        .map(|part| match part.split_once('=') {
+            Some((key, _)) if key.trim().eq_ignore_ascii_case("COUNT") => {
                 format!("COUNT={count}")
-            } else {
-                part.to_string()
             }
+            _ => part.to_string(),
         })
         .collect::<Vec<_>>()
         .join(";")
