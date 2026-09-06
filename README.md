@@ -85,7 +85,7 @@ priority and creation time; subtasks sit under their parent.
 | `Tab` | switch pane |
 | `Enter` | open the task; in the left pane, focus the list |
 | `a` | add in a form; the title still takes `Book dentist due:fri 09:00 pri:H +health @life` |
-| `d` | done, or reopen (recurring tasks are completed on the phone) |
+| `d` | done, or reopen; a recurring task moves on to its next occurrence |
 | `x` | delete, after `y/n` |
 | `u` | undo the last change (the bar says `(u undo)` when it applies) |
 | `e` `t` `p` `T` | edit in a form; edit the due date, cycle priority, edit tags |

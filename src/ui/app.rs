@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::ical::{codec, vtodo};
 use crate::model::{Alarm, Anchor, Due, NewTask, Priority, Project, ProjectId, Task};
 use crate::quickadd;
+use crate::recur;
 use crate::store::Store;
 use crate::sync::{SyncState, Syncer};
 
@@ -952,9 +953,9 @@ impl App {
         let Some(task) = self.selected_task() else {
             return;
         };
-        let (uid, done, recurring) = (task.uid.clone(), task.is_done(), task.is_recurring());
-        if !done && recurring {
-            self.notify("Recurring tasks are completed on the phone".to_string());
+        let (uid, done) = (task.uid.clone(), task.is_done());
+        if !done && let Some(rule) = task.rrule.clone() {
+            self.complete_occurrence(&uid, &rule);
             return;
         }
         let now = self.now.to_utc();
@@ -968,6 +969,68 @@ impl App {
             Ok(())
         });
         self.report(result);
+    }
+
+    /// `d` on a recurring task: the due date moves to the rule's next
+    /// occurrence and the task stays pending, with absolute alarms moved
+    /// along and a counted rule losing one count. Completing the last
+    /// occurrence completes the task itself. A rule the computation does
+    /// not cover is left to the phone apps.
+    fn complete_occurrence(&mut self, uid: &str, rule: &str) {
+        let Some(task) = self.tasks.iter().find(|t| t.uid == uid) else {
+            return;
+        };
+        let Some(due) = task.due else {
+            self.notify("No due date to advance; complete it on the phone".to_string());
+            return;
+        };
+        let from = match due {
+            Due::Date(date) => date,
+            Due::DateTime(at) => at.with_timezone(&Local).date_naive(),
+        };
+        match recur::advance(rule, from) {
+            recur::Advance::Unsupported => {
+                self.notify("This rule is completed on the phone".to_string());
+            }
+            recur::Advance::Ended => {
+                let now = self.now.to_utc();
+                let result = self.change(uid, "Done for good", move |task| {
+                    task.complete(now);
+                    Ok(())
+                });
+                self.report(result);
+            }
+            recur::Advance::Next { date, rrule } => {
+                let next = match due {
+                    Due::Date(_) => Due::Date(date),
+                    Due::DateTime(at) => {
+                        let time = at.with_timezone(&Local).time();
+                        Due::DateTime(vtodo::wall_to_utc(&Local, date.and_time(time)))
+                    }
+                };
+                let delta = match (due, next) {
+                    (Due::DateTime(a), Due::DateTime(b)) => b - a,
+                    _ => chrono::TimeDelta::days((date - from).num_days()),
+                };
+                let label = format!(
+                    "Done, next {}",
+                    due_label(Some(next), self.now, &self.config)
+                );
+                let result = self.change(uid, label.trim_end(), move |task| {
+                    task.due = Some(next);
+                    if let Some(rrule) = rrule {
+                        task.rrule = Some(rrule);
+                    }
+                    for alarm in &mut task.alarms {
+                        if let Alarm::Absolute(at) = alarm {
+                            *at += delta;
+                        }
+                    }
+                    Ok(())
+                });
+                self.report(result);
+            }
+        }
     }
 
     fn cycle_priority(&mut self) {

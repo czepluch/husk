@@ -179,17 +179,70 @@ fn d_completes_with_the_apple_triple_and_u_reopens() {
 }
 
 #[test]
-fn d_refuses_recurring_tasks() {
+fn d_advances_a_recurring_task_and_completes_the_last_occurrence() {
     let mut s = sample();
-    let before = file(&s, "life/recurring-weekly-until.ics");
     select(&mut s.app, WERKLY);
+    s.app.handle_key(key('d'));
+    let text = file(&s, "life/recurring-weekly-until.ics");
+    assert!(text.contains("DUE;VALUE=DATE:20260907\n"), "{text}");
+    assert!(
+        text.contains("DTSTART;VALUE=DATE:20260907\n"),
+        "a DTSTART equal to DUE follows it:\n{text}"
+    );
+    assert!(
+        text.contains("STATUS:NEEDS-ACTION\n"),
+        "stays pending:\n{text}"
+    );
+    assert!(
+        text.contains("RRULE:FREQ=WEEKLY;UNTIL=20260930\n"),
+        "{text}"
+    );
+    assert!(
+        s.app.message.as_deref().unwrap().starts_with("Done, next "),
+        "{:?}",
+        s.app.message
+    );
+    s.app.handle_key(key('u'));
+    let text = file(&s, "life/recurring-weekly-until.ics");
+    assert!(
+        text.contains("DUE;VALUE=DATE:20260831\n"),
+        "undo brings the date back:\n{text}"
+    );
+
+    select(&mut s.app, WERKLY);
+    s.app.handle_key(key('t'));
+    clear_input(&mut s.app);
+    type_text(&mut s.app, "2026-09-28");
+    s.app.handle_key(code(KeyCode::Enter));
+    s.app.handle_key(key('d'));
+    let text = file(&s, "life/recurring-weekly-until.ics");
+    assert!(
+        text.contains("STATUS:COMPLETED\n"),
+        "the rule's last occurrence completes the task:\n{text}"
+    );
+    assert!(
+        text.contains("RRULE:"),
+        "the rule itself is left in place:\n{text}"
+    );
+}
+
+#[test]
+fn d_leaves_uncovered_rules_to_the_phone() {
+    let mut s = sample();
+    let raw = file(&s, "life/no-due.ics").replace(
+        "SUMMARY:Test task",
+        "DUE;VALUE=DATE:20260901\nRRULE:FREQ=WEEKLY;BYSETPOS=2\nSUMMARY:Test task",
+    );
+    s.app.apply_raw(TEST_TASK, &raw);
+    let before = file(&s, "life/no-due.ics");
+    select(&mut s.app, TEST_TASK);
     s.app.handle_key(key('d'));
     assert!(
         s.app.message.as_deref().unwrap().contains("phone"),
         "{:?}",
         s.app.message
     );
-    assert_eq!(file(&s, "life/recurring-weekly-until.ics"), before);
+    assert_eq!(file(&s, "life/no-due.ics"), before);
 }
 
 #[test]

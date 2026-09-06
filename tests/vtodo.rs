@@ -770,3 +770,21 @@ fn the_zone_comes_from_tz_when_it_is_a_name_else_from_the_system() {
     assert_eq!(zone_named(None, Some("Nowhere/Nope")), None);
     assert_eq!(zone_named(None, None), None);
 }
+
+#[test]
+fn changing_the_rrule_rewrites_or_removes_the_line() {
+    let before = common::fixture("apple/recurring-weekly-until.ics");
+    let mut task = load("apple/recurring-weekly-until.ics");
+    task.rrule = Some("FREQ=WEEKLY;COUNT=4".to_string());
+    let after = text_of(&task);
+    assert!(after.contains("RRULE:FREQ=WEEKLY;COUNT=4\n"), "{after}");
+    assert_eq!(
+        added_lines(&before, &after),
+        vec!["RRULE:FREQ=WEEKLY;COUNT=4"],
+        "only the rule changed"
+    );
+
+    task.rrule = None;
+    let after = text_of(&task);
+    assert!(!after.contains("RRULE"), "{after}");
+}

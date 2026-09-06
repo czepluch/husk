@@ -1,4 +1,5 @@
-use husk::recur::describe;
+use chrono::NaiveDate;
+use husk::recur::{Advance, advance, describe};
 
 #[test]
 fn plain_frequencies() {
@@ -145,4 +146,134 @@ fn a_utc_until_shows_the_local_date_it_falls_on() {
         "weekly until 2026-12-31",
         "floating stays as written"
     );
+}
+
+fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(y, m, day).unwrap()
+}
+
+fn next(rule: &str, from: NaiveDate) -> NaiveDate {
+    match advance(rule, from) {
+        Advance::Next { date, rrule: None } => date,
+        other => panic!("{rule}: {other:?}"),
+    }
+}
+
+#[test]
+fn advancing_steps_by_the_frequency_and_interval() {
+    assert_eq!(next("FREQ=DAILY", d(2026, 9, 7)), d(2026, 9, 8));
+    assert_eq!(next("FREQ=DAILY;INTERVAL=3", d(2026, 9, 7)), d(2026, 9, 10));
+    assert_eq!(next("FREQ=WEEKLY", d(2026, 8, 31)), d(2026, 9, 7));
+    assert_eq!(
+        next("FREQ=WEEKLY;INTERVAL=2", d(2026, 8, 31)),
+        d(2026, 9, 14)
+    );
+    assert_eq!(
+        next("FREQ=MONTHLY", d(2026, 1, 31)),
+        d(2026, 3, 31),
+        "February has no 31st"
+    );
+    assert_eq!(
+        next("FREQ=MONTHLY;INTERVAL=2", d(2026, 9, 7)),
+        d(2026, 11, 7)
+    );
+    assert_eq!(next("FREQ=YEARLY", d(2026, 9, 7)), d(2027, 9, 7));
+    assert_eq!(
+        next("FREQ=YEARLY", d(2024, 2, 29)),
+        d(2028, 2, 29),
+        "a leap day skips to the next leap year"
+    );
+}
+
+#[test]
+fn advancing_honours_byday_and_bymonthday() {
+    assert_eq!(
+        next("FREQ=WEEKLY;BYDAY=MO,TH", d(2026, 9, 7)),
+        d(2026, 9, 10)
+    );
+    assert_eq!(
+        next("FREQ=WEEKLY;BYDAY=MO,TH", d(2026, 9, 10)),
+        d(2026, 9, 14)
+    );
+    assert_eq!(
+        next("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH", d(2026, 9, 7)),
+        d(2026, 9, 10),
+        "the Thursday of the same week still counts"
+    );
+    assert_eq!(
+        next("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH", d(2026, 9, 10)),
+        d(2026, 9, 21),
+        "the next week is off phase"
+    );
+    assert_eq!(
+        next("FREQ=MONTHLY;BYMONTHDAY=15", d(2026, 9, 15)),
+        d(2026, 10, 15)
+    );
+    assert_eq!(
+        next("FREQ=MONTHLY;BYMONTHDAY=-1", d(2026, 9, 30)),
+        d(2026, 10, 31)
+    );
+    assert_eq!(
+        next("FREQ=MONTHLY;BYMONTHDAY=31", d(2026, 8, 31)),
+        d(2026, 10, 31),
+        "September has no 31st"
+    );
+    assert_eq!(
+        next("FREQ=MONTHLY;BYDAY=2TU", d(2026, 9, 8)),
+        d(2026, 10, 13)
+    );
+    assert_eq!(
+        next("FREQ=MONTHLY;BYDAY=-1FR", d(2026, 9, 25)),
+        d(2026, 10, 30)
+    );
+    assert_eq!(
+        next("FREQ=MONTHLY;BYDAY=1MO,3FR", d(2026, 9, 7)),
+        d(2026, 9, 18),
+        "the same month's later day comes first"
+    );
+    assert_eq!(
+        next("FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=24", d(2026, 12, 24)),
+        d(2027, 12, 24)
+    );
+}
+
+#[test]
+fn until_count_and_uncovered_parts_end_or_refuse() {
+    assert_eq!(
+        next("FREQ=WEEKLY;UNTIL=20260930", d(2026, 9, 21)),
+        d(2026, 9, 28),
+        "until is inclusive"
+    );
+    assert_eq!(
+        advance("FREQ=WEEKLY;UNTIL=20260930", d(2026, 9, 28)),
+        Advance::Ended
+    );
+    assert_eq!(
+        advance("FREQ=WEEKLY;COUNT=3", d(2026, 9, 7)),
+        Advance::Next {
+            date: d(2026, 9, 14),
+            rrule: Some("FREQ=WEEKLY;COUNT=2".to_string())
+        }
+    );
+    assert_eq!(
+        advance("FREQ=WEEKLY;COUNT=1", d(2026, 9, 7)),
+        Advance::Ended
+    );
+    assert_eq!(
+        advance("FREQ=WEEKLY;WKST=MO", d(2026, 9, 7)),
+        Advance::Next {
+            date: d(2026, 9, 14),
+            rrule: None
+        }
+    );
+    for rule in [
+        "FREQ=HOURLY",
+        "FREQ=WEEKLY;BYSETPOS=2",
+        "FREQ=WEEKLY;BYDAY=MO;WKST=SU",
+        "FREQ=WEEKLY;BYDAY=2TU",
+        "FREQ=YEARLY;BYDAY=2TU",
+        "not a rule",
+    ] {
+        assert_eq!(advance(rule, d(2026, 9, 7)), Advance::Unsupported, "{rule}");
+    }
 }

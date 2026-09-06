@@ -5,8 +5,8 @@
 //! properties whose model value differs from what the file already says, so
 //! every other byte, including properties husk does not model, survives.
 //! `apply` honours `summary`, `description`, `due`, `status`, `completed`,
-//! `priority`, `tags` and `alarms`. `start`, `rrule`, `parent`, `created` and
-//! `uid` are read only; `project` changes through the store's `move_to`.
+//! `priority`, `tags`, `alarms` and `rrule`. `start`, `parent`, `created`
+//! and `uid` are read only; `project` changes through the store's `move_to`.
 
 use std::str::FromStr;
 
@@ -306,6 +306,14 @@ pub fn apply_in(task: &Task, zone: Option<Tz>) -> Result<Document> {
     }
     if task.alarms != original.alarms {
         set_alarms(todo, &task.alarms, &task.summary);
+    }
+    if task.rrule != original.rrule {
+        match &task.rrule {
+            Some(rule) => todo.set(Property::new("RRULE", rule.clone())),
+            None => {
+                todo.remove("RRULE");
+            }
+        }
     }
     if let (Some(tz), Some(Due::DateTime(at))) = (zone_used, task.due) {
         ensure_vtimezone(&mut doc.root, tz, at.with_timezone(&tz).year());
@@ -635,7 +643,7 @@ fn parse_due(p: &Property) -> Option<Due> {
 /// In a DST gap the wall time does not exist; it is moved forward by the
 /// hour the clocks skipped, which keeps it after the times before the gap.
 /// An ambiguous time (clocks set back) takes its first occurrence.
-fn wall_to_utc<Z: TimeZone>(zone: &Z, wall: NaiveDateTime) -> DateTime<Utc> {
+pub(crate) fn wall_to_utc<Z: TimeZone>(zone: &Z, wall: NaiveDateTime) -> DateTime<Utc> {
     zone.from_local_datetime(&wall)
         .earliest()
         .or_else(|| {

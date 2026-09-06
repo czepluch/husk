@@ -745,7 +745,10 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
             "a",
             "add in a form; the title takes due:fri pri:H +tag @project",
         ),
-        ("d", "done / reopen (recurring tasks: on the phone)"),
+        (
+            "d",
+            "done / reopen; a recurring task moves to its next occurrence",
+        ),
         ("x", "delete, after confirming"),
         ("u", "undo the last change"),
         ("e / t", "edit in a form / edit the due date"),
