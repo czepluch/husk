@@ -5,6 +5,10 @@ Keep a Changelog.
 
 ## Unreleased
 
+- `contrib/husk-capture`: a quick-capture script for a launcher keybind
+  that prompts with fuzzel, runs `husk add` and reports the outcome
+  through the notification daemon.
+
 - Completing a recurring task moves its due date to the rule's next
   occurrence and keeps it pending, moving absolute alarms along in
   wall-clock time and counting a COUNT down; the last occurrence completes the task itself.

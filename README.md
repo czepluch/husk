@@ -116,7 +116,14 @@ husk sync [--discover]                           # --discover after a new list o
 husk theme dump | check <file>
 ```
 
-Hyprland capture keybind: `fuzzel --dmenu | xargs -r husk add`.
+Quick capture from anywhere: `contrib/husk-capture` opens a fuzzel prompt,
+creates the task from what you type (same grammar as above) and confirms or
+complains through the notification daemon.
+
+```
+install -Dm755 contrib/husk-capture ~/.local/bin/husk-capture
+# hyprland.conf: bind = $mainMod, T, exec, husk-capture
+```
 
 Waybar badge: `husk list --json | jq length` counts tasks due today or
 overdue; `--view overdue` for the overdue count alone. `list --json` rows carry

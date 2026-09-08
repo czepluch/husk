@@ -369,7 +369,7 @@ Later, optional: `CaldavStore` implementing `Store` over HTTPS with `reqwest` (P
 - Creating a list from husk: a new vdir collection directory plus its `displayname` file. Blocked on the sync trap in section 5 (`discover` creates the server side without a name, and `metasync` under `b wins` then overwrites the local one), so it needs a PROPPATCH against the server first, or CaldavStore.
 
 - Waybar module: `husk list --json | jq length` for a badge of tasks due today or overdue (`--view overdue` for the overdue count alone); click opens the TUI in a terminal.
-- `husk add` from a Hyprland keybind with a fuzzel prompt, as above.
+- `husk add` from a Hyprland keybind: ships as `contrib/husk-capture` (fuzzel prompt, notify-send feedback, nonzero when the sync fails).
 - Share a list with your partner: create it in Radicale under a shared collection with `rights` allowing both users; Apple Reminders and Tasks.org both handle it, husk sees it as one more project.
 - Since Radicale is now running, point khal and Apple Calendar at it too; `Upcoming` could show today's events read-only for context, later.
 - Tag-based views (`#health` across all projects) fall out of the filter for free.

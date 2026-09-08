@@ -1,0 +1,24 @@
+#!/bin/sh
+# One-line task capture for a launcher keybind: prompts with fuzzel,
+# creates the task with husk add and reports through the notification
+# daemon. husk add waits for the sync and exits nonzero when it fails,
+# so a task that did not reach the server is loud.
+#
+# Install:
+#   install -Dm755 contrib/husk-capture ~/.local/bin/husk-capture
+# hyprland.conf:
+#   bind = $mainMod, T, exec, husk-capture
+# Any dmenu-style prompt works; edit the fuzzel line.
+
+set -eu
+
+command -v husk > /dev/null 2>&1 || PATH="$HOME/.cargo/bin:$PATH"
+
+text=$(fuzzel --dmenu --prompt "task> " < /dev/null) || exit 0
+[ -n "$text" ] || exit 0
+if out=$(husk add "$text" 2>&1); then
+    notify-send "husk" "$out"
+else
+    notify-send -u critical "husk" "$out"
+    exit 1
+fi
