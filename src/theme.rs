@@ -584,7 +584,13 @@ mod tests {
         let ansi = ThemeFile::parse(ANSI).unwrap().resolve().unwrap();
         assert_eq!(ansi.base, Style::new().fg(Color::Reset).bg(Color::Reset));
         assert_eq!(ansi.muted, Style::new().fg(Color::DarkGray));
-        assert_eq!(ansi.selected, Style::new().add_modifier(Modifier::REVERSED));
+        assert_eq!(
+            ansi.selected,
+            Style::new()
+                .fg(Color::Reset)
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
+        );
     }
 
     #[test]

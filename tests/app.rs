@@ -568,6 +568,42 @@ fn priority_is_shown_as_title_weight() {
 }
 
 #[test]
+fn ansi_selection_is_one_solid_bar_over_a_done_row() {
+    use ratatui::style::Modifier;
+    let theme = Theme::load("ansi", None).unwrap();
+    let tasks = vec![task(
+        "done",
+        "Old done thing",
+        "p",
+        Some("DUE;VALUE=DATE:20260830"),
+        "STATUS:COMPLETED\r\nCOMPLETED:20260831T101451Z\r\n",
+    )];
+    let mut s = make(&[("p", "P")], tasks);
+    let app = &mut s.app;
+    app.view_index = 4;
+    app.handle_key(key('c'));
+    let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
+    let text = screen(&terminal);
+    let (y, line) = text
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("Old done thing"))
+        .unwrap_or_else(|| panic!("{text}"));
+    let start = line[..line.find("Old done thing").unwrap()].chars().count();
+    let buffer = terminal.backend().buffer();
+    for x in start..start + "Old done thing".len() {
+        let cell = buffer.cell((x as u16, y as u16)).unwrap();
+        assert_eq!(cell.bg, theme.selected.bg.unwrap(), "bg at {x}");
+        assert_eq!(cell.fg, theme.selected.fg.unwrap(), "fg at {x}");
+        assert!(
+            !cell.modifier.contains(Modifier::REVERSED),
+            "reverse at {x}"
+        );
+    }
+}
+
+#[test]
 fn selection_follows_the_task_when_time_reorders_the_list() {
     let mut s = sample();
     let app = &mut s.app;

@@ -5,6 +5,10 @@ Keep a Changelog.
 
 ## Unreleased
 
+- The `ansi` flavor draws the selection as a solid bar in the terminal
+  foreground instead of reverse video, which swapped each span's own color
+  into the background and left a completed row patchy.
+
 - The due prompt and the form's due field refuse text with words left
   over after the date (`tomorrow lunch`) instead of silently dropping them.
 

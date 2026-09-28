@@ -17,7 +17,9 @@ project = "blue"
 recurring = "cyan"
 
 [styles]
-selected = { reverse = true }
+# A solid bar with the terminal foreground: reverse video would swap each
+# span's own color into the background and leave a done row patchy.
+selected = { fg = "default", bg = "bright_black", bold = true }
 title = { fg = "accent", bold = true }
 status_bar = { fg = "muted" }
 help_key = { fg = "accent", bold = true }
