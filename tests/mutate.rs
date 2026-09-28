@@ -101,7 +101,7 @@ fn find_file(s: &Sample, project: &str, needle: &str) -> Option<String> {
 
 /// Moves the cursor onto a task in the All view.
 fn select(app: &mut App, uid: &str) {
-    app.view_index = 3;
+    app.view_index = 4;
     app.handle_key(key('g'));
     for _ in 0..50 {
         if app.selected_task().is_some_and(|t| t.uid == uid) {
@@ -283,7 +283,7 @@ fn x_confirms_deletes_and_u_restores() {
 #[test]
 fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
     let mut s = sample();
-    s.app.view_index = 5;
+    s.app.view_index = 6;
     assert_eq!(s.app.view_name(&s.app.view()), "Life");
     s.app.handle_key(key('a'));
     assert_eq!(s.app.mode, Mode::Form);
@@ -878,7 +878,7 @@ fn undoing_a_move_keeps_the_task_when_the_way_back_is_gone() {
 #[test]
 fn a_failed_form_keeps_its_text() {
     let mut s = sample();
-    s.app.view_index = 5;
+    s.app.view_index = 6;
     s.app.handle_key(key('a'));
     type_text(&mut s.app, "reply to @nina about lunch");
     s.app.handle_key(code(KeyCode::Enter));

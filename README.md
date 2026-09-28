@@ -75,8 +75,8 @@ Any command takes `--config <file>` to use another config.
 
 ## The TUI
 
-`husk` opens it. Left pane: Overdue, Today, Upcoming, All, then one entry per
-list. Right pane: the tasks of that view, overdue first, then by due time,
+`husk` opens it. Left pane: Overdue, Today, Upcoming, Urgent (high
+priority, all lists), All, then one entry per list. Right pane: the tasks of that view, overdue first, then by due time,
 priority and creation time; subtasks sit under their parent.
 
 | Key | Action |
@@ -110,7 +110,7 @@ task's first alarm as its reminder time, so keep it to one.
 
 ```
 husk add "Call bank due:tomorrow 09:00 +money"   # waits for the sync
-husk list [--view overdue|today|upcoming|all] [--project X] [--json]
+husk list [--view overdue|today|upcoming|urgent|all] [--project X] [--json]
 husk notify [--nag] [--dry-run]                  # see Notifications
 husk sync [--discover]                           # --discover after a new list on a phone
 husk theme dump | check <file>

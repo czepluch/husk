@@ -81,6 +81,7 @@ enum ViewArg {
     Overdue,
     Today,
     Upcoming,
+    Urgent,
     All,
 }
 
@@ -132,6 +133,7 @@ fn main() -> Result<()> {
                 ViewArg::Overdue => View::Overdue,
                 ViewArg::Today => View::Today,
                 ViewArg::Upcoming => View::Upcoming,
+                ViewArg::Urgent => View::Urgent,
                 ViewArg::All => View::All,
             };
             let tasks = store.tasks(None)?;

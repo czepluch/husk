@@ -20,7 +20,13 @@ use crate::time::Zone;
 const UNDO_DEPTH: usize = 20;
 
 /// The smart views ahead of the projects in the left pane.
-pub const SMART_VIEWS: [View; 4] = [View::Overdue, View::Today, View::Upcoming, View::All];
+pub const SMART_VIEWS: [View; 5] = [
+    View::Overdue,
+    View::Today,
+    View::Upcoming,
+    View::Urgent,
+    View::All,
+];
 /// How long a bar message stays without a key press.
 const MESSAGE_SECONDS: i64 = 5;
 
@@ -264,6 +270,7 @@ impl App {
             View::Overdue => "Overdue".to_string(),
             View::Today => "Today".to_string(),
             View::Upcoming => "Upcoming".to_string(),
+            View::Urgent => "Urgent".to_string(),
             View::All => "All".to_string(),
             View::Project(id) => self.project_name(id),
         }

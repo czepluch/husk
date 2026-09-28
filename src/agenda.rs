@@ -15,6 +15,7 @@ pub enum View {
     Overdue,
     Today,
     Upcoming,
+    Urgent,
     All,
     Project(ProjectId),
 }
@@ -104,6 +105,7 @@ pub fn bucket(due: Option<Due>, now: DateTime<Local>) -> Bucket {
 /// Done tasks are hidden unless asked for. When shown, they qualify by when
 /// they were finished: Today shows what was completed today, Upcoming the
 /// last seven days, All and the projects everything, Overdue nothing.
+/// Urgent is All restricted to high priority, done tasks included.
 pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) -> bool {
     if task.is_done() {
         if !show_done {
@@ -111,6 +113,7 @@ pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) 
         }
         return match view {
             View::All => true,
+            View::Urgent => task.priority == Priority::High,
             View::Project(id) => &task.project == id,
             View::Overdue => false,
             View::Today | View::Upcoming => {
@@ -128,6 +131,7 @@ pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) 
     }
     match view {
         View::All => true,
+        View::Urgent => task.priority == Priority::High,
         View::Project(id) => &task.project == id,
         View::Overdue => bucket(task.due, now) == Bucket::Overdue,
         View::Today => matches!(bucket(task.due, now), Bucket::Overdue | Bucket::Today),

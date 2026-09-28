@@ -5,6 +5,9 @@ Keep a Changelog.
 
 ## Unreleased
 
+- An `Urgent` view between Upcoming and All lists the high-priority tasks
+  of every project, also as `husk list --view urgent`.
+
 - The `ansi` flavor draws the selection as a solid bar in the terminal
   foreground instead of reverse video, which swapped each span's own color
   into the background and left a completed row patchy.
