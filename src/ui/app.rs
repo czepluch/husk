@@ -491,7 +491,7 @@ impl App {
             }
             KeyCode::Char('t') => {
                 if let Some(task) = self.selected_task() {
-                    let (uid, text) = (task.uid.clone(), due_input(task.due, &self.config));
+                    let (uid, text) = (task.uid.clone(), due_input(task.due));
                     self.start_input(InputKind::Due, text, uid);
                 }
             }
@@ -669,7 +669,7 @@ impl App {
     fn open_form(&mut self, uid: Option<&str>) {
         let form = match uid.and_then(|uid| self.tasks.iter().find(|t| t.uid == uid)) {
             Some(task) => {
-                let due = due_input(task.due, &self.config);
+                let due = due_input(task.due);
                 Form {
                     uid: Some(task.uid.clone()),
                     title: task.summary.clone(),
@@ -1337,7 +1337,7 @@ fn step(index: usize, delta: isize, len: usize) -> usize {
 
 /// The text the due prompt starts with: what the task has now, in the
 /// forms the prompt reads back.
-pub fn due_input(due: Option<Due>, _config: &Config) -> String {
+fn due_input(due: Option<Due>) -> String {
     match due {
         None => String::new(),
         Some(Due::Date(date)) => date.format("%Y-%m-%d").to_string(),
