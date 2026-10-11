@@ -1444,3 +1444,21 @@ fn due_text_with_leftover_words_is_refused_not_trimmed() {
             .contains("could not read a date")
     );
 }
+
+#[test]
+fn undo_keeps_the_last_twenty_changes() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    for _ in 0..21 {
+        s.app.handle_key(key('p'));
+    }
+    for i in 0..20 {
+        s.app.handle_key(key('u'));
+        assert!(
+            s.app.message.as_deref().unwrap().starts_with("Restored"),
+            "undo {i}"
+        );
+    }
+    s.app.handle_key(key('u'));
+    assert_eq!(s.app.message.as_deref(), Some("Nothing to undo"));
+}
