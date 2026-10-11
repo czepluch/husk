@@ -109,7 +109,7 @@ fn main() -> Result<()> {
             if !config.sync_command.is_empty()
                 && let Err(error) = sync::run(&config.sync_command)
             {
-                bail!("task added, but the sync failed: {error}");
+                bail!("task added, but the sync failed: {error:#}");
             }
             Ok(())
         }
@@ -184,12 +184,11 @@ fn main() -> Result<()> {
             if config.sync_command.is_empty() {
                 bail!("sync_command is empty in the config");
             }
-            let outcome = if discover {
+            if discover {
                 sync::run_discover(&config.sync_command)
             } else {
                 sync::run(&config.sync_command)
-            };
-            outcome.map_err(|e| anyhow::anyhow!(e))
+            }
         }
     }
 }

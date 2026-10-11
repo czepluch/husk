@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Local};
 
 /// Requests arriving within this window are merged into one run.
@@ -101,7 +102,7 @@ fn worker(rx: &Receiver<()>, command: &[String], state: &Mutex<SyncState>, pendi
                     s.last_ok = Some(Local::now());
                     s.last_error = None;
                 }
-                Err(message) => s.last_error = Some(message),
+                Err(e) => s.last_error = Some(format!("{e:#}")),
             }
         }
         if let Some(rest) = MIN_INTERVAL.checked_sub(started.elapsed()) {
@@ -114,13 +115,13 @@ fn worker(rx: &Receiver<()>, command: &[String], state: &Mutex<SyncState>, pendi
 /// on a phone needs both before `sync` sees it), then the sync command,
 /// all with the terminal attached so discover can ask about creating
 /// collections.
-pub fn run_discover(command: &[String]) -> Result<(), String> {
-    let (program, args) = command.split_first().ok_or("no sync command")?;
+pub fn run_discover(command: &[String]) -> Result<()> {
+    let (program, args) = command.split_first().context("no sync command")?;
     for verb in ["discover", "metasync"] {
         let status = Command::new(program)
             .arg(verb)
             .status()
-            .map_err(|e| format!("{program} {verb}: {e}"))?;
+            .with_context(|| format!("{program} {verb}"))?;
         if !status.success() {
             let hint = if Path::new(program)
                 .file_name()
@@ -130,27 +131,26 @@ pub fn run_discover(command: &[String]) -> Result<(), String> {
             } else {
                 "; --discover runs vdirsyncer's discover and metasync verbs"
             };
-            return Err(format!("{program} {verb} failed with {status}{hint}"));
+            bail!("{program} {verb} failed with {status}{hint}");
         }
     }
     let status = Command::new(program)
         .args(args)
         .status()
-        .map_err(|e| format!("{program}: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{program} failed with {status}"))
+        .with_context(|| program.clone())?;
+    if !status.success() {
+        bail!("{program} failed with {status}");
     }
+    Ok(())
 }
 
 /// Runs the sync command once, in the foreground.
-pub fn run(command: &[String]) -> Result<(), String> {
-    let (program, args) = command.split_first().ok_or("no sync command")?;
+pub fn run(command: &[String]) -> Result<()> {
+    let (program, args) = command.split_first().context("no sync command")?;
     let output = Command::new(program)
         .args(args)
         .output()
-        .map_err(|e| format!("{program}: {e}"))?;
+        .with_context(|| program.clone())?;
     if output.status.success() {
         return Ok(());
     }
@@ -162,5 +162,5 @@ pub fn run(command: &[String]) -> Result<(), String> {
         .unwrap_or("no output")
         .trim()
         .to_string();
-    Err(format!("{program} failed: {reason}"))
+    bail!("{program} failed: {reason}")
 }
