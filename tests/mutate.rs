@@ -568,6 +568,27 @@ fn edit_with_runs_the_editor_on_a_temp_file() {
 }
 
 #[test]
+fn the_editor_temp_file_is_private_and_fresh_each_time() {
+    let dir = common::TempDir::new();
+    let script = dir.path().join("editor.sh");
+    fs::write(
+        &script,
+        "#!/bin/sh\nstat -c '%a' \"$1\" > \"$1.mode\"\necho \"$1\" >> \"$1.mode\"\ncat \"$1.mode\" > \"$1\"\nrm \"$1.mode\"\n",
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&script).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    fs::set_permissions(&script, perms).unwrap();
+    let editor = script.display().to_string();
+    let first = ui::edit_with(&editor, "notes", "md").unwrap();
+    let second = ui::edit_with(&editor, "notes", "md").unwrap();
+    let (mode, path) = first.split_once('\n').unwrap();
+    assert_eq!(mode, "600", "owner only");
+    assert_ne!(first, second, "a new name per edit, so none can be planted");
+    assert!(!std::path::Path::new(path.trim()).exists(), "removed after");
+}
+
+#[test]
 fn writes_trigger_a_sync_and_a_finished_run_reloads() {
     let mut s = sample_with(|c| {
         c.sync_command = vec!["sh".to_string(), "-c".to_string(), "true".to_string()];
