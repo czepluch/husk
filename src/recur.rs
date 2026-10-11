@@ -114,14 +114,16 @@ pub fn describe(rule: &str) -> String {
 }
 
 fn text(rule: &str) -> Option<String> {
-    let rule = parse(rule)?;
-    let freq = rule.freq;
-    let interval = rule.interval;
-    let days = rule.days;
-    let month_day = rule.month_day;
-    let month = rule.month;
-    let until = rule.until.map(|date| date.format("%Y-%m-%d").to_string());
-    let count = rule.count;
+    let Rule {
+        freq,
+        interval,
+        days,
+        month_day,
+        month,
+        until,
+        count,
+        ..
+    } = parse(rule)?;
 
     let mut out = String::new();
     let with_ordinal = days.iter().filter(|d| d.ordinal.is_some()).count();
@@ -157,7 +159,7 @@ fn text(rule: &str) -> Option<String> {
         (None, None) => {}
     }
     if let Some(until) = until {
-        write!(out, " until {until}").ok()?;
+        write!(out, " until {}", until.format("%Y-%m-%d")).ok()?;
     }
     match count {
         Some(1) => out.push_str(", once"),
