@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 
 use chrono::{DateTime, TimeZone, Utc};
-use husk::ical::vtodo;
+use husk::ical::tz;
 use husk::model::{Due, NewTask, Priority, ProjectId};
 use husk::store::{Store, VdirStore};
 
@@ -122,7 +122,7 @@ fn create_writes_a_uid_named_file_and_returns_the_task() {
     let path = dir.path().join(format!("life/{}.ics", task.uid));
     let text = fs::read_to_string(&path).unwrap();
     assert!(text.contains("SUMMARY:Created here\r\n"), "{text}");
-    let due = match vtodo::local_zone() {
+    let due = match tz::local_zone() {
         Some(tz) => format!(
             "DUE;TZID={}:{}\r\n",
             tz.name(),

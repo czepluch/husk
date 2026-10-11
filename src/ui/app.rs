@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::agenda::{Bucket, View, bucket, due_label, in_view, nest, sort_key};
 use crate::alarms;
 use crate::config::Config;
-use crate::ical::{codec, vtodo};
+use crate::ical::{codec, tz, vtodo};
 use crate::model::{Alarm, Due, NewTask, Priority, Project, ProjectId, Task};
 use crate::quickadd;
 use crate::recur;
@@ -929,7 +929,7 @@ impl App {
             self.notify("No due date to advance; complete it on the phone".to_string());
             return;
         };
-        let zone = Zone::from_tz(vtodo::due_zone(task));
+        let zone = Zone::from_tz(tz::due_zone(task));
         let from = match due {
             Due::Date(date) => date,
             Due::DateTime(at) => zone.wall(at).date(),

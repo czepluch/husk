@@ -299,6 +299,8 @@ src/
   ical/
     codec.rs      unfold/fold, escape, parse to IcalComponent, serialize
     vtodo.rs      IcalComponent <-> Task, property-level patching
+    tz.rs         zone for new values, VTIMEZONE generation
+    duration.rs   RFC 5545 durations for alarm triggers
   store/
     mod.rs        Store trait
     vdir.rs       VdirStore

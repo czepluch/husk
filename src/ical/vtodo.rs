@@ -11,19 +11,16 @@
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use chrono::{
-    DateTime, Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeDelta, TimeZone,
-    Utc,
-};
-use chrono_tz::{OffsetComponents, OffsetName, Tz};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono_tz::Tz;
 
 use crate::ical::codec::{self, Component, Document, Entry, Param, Property};
 use crate::model::{Alarm, Anchor, Due, NewTask, Priority, ProjectId, Status, Task};
 use crate::time::{Zone, due_date};
 
-const DATE: &str = "%Y%m%d";
-const DATE_TIME: &str = "%Y%m%dT%H%M%S";
-const UTC_DATE_TIME: &str = "%Y%m%dT%H%M%SZ";
+use crate::ical::duration::{format_duration, parse_duration};
+use crate::ical::tz::{ensure_vtimezone, local_zone, vtimezone};
+use crate::ical::{DATE, DATE_TIME, UTC_DATE_TIME};
 
 fn prodid() -> String {
     format!("-//husk//husk {}//EN", env!("CARGO_PKG_VERSION"))
@@ -97,177 +94,6 @@ pub fn from_document(raw: Document, project: ProjectId) -> Result<Task> {
         created,
         raw,
     })
-}
-
-/// The zone new timed values are written in: `TZ` when it names a zone
-/// chrono-tz knows, else the system zone. `None` when neither does, in
-/// which case values are written in UTC.
-pub fn local_zone() -> Option<Tz> {
-    let env = std::env::var("TZ").ok();
-    let system = iana_time_zone::get_timezone().ok();
-    zone_named(env.as_deref(), system.as_deref())
-}
-
-/// The zone of the task's `DUE` `TZID`, when chrono-tz knows it.
-pub fn due_zone(task: &Task) -> Option<Tz> {
-    let due = task.raw.root.child("VTODO")?.prop("DUE")?;
-    Tz::from_str(due.param("TZID")?).ok()
-}
-
-/// `local_zone` for a given `TZ` value and system zone name. A `TZ` that
-/// is a file path or a POSIX rule string is not a zone name and defers to
-/// the system zone.
-pub fn zone_named(tz_env: Option<&str>, system: Option<&str>) -> Option<Tz> {
-    tz_env
-        .and_then(|tz| Tz::from_str(tz.trim_start_matches(':')).ok())
-        .or_else(|| Tz::from_str(system?).ok())
-}
-
-/// A VTIMEZONE for one zone covering one year. Phone clients read the
-/// `TZID` and know the zone; the component is there so the file is valid
-/// on its own. Apple and Tasks.org write theirs with RRULEs; those are
-/// left alone.
-pub fn vtimezone(tz: Tz, year: i32) -> Component {
-    let mut component = Component::new("VTIMEZONE");
-    component.set(Property::new("TZID", tz.name()));
-    for observance in observances(tz, year) {
-        component.push_child(observance);
-    }
-    component
-}
-
-/// The observance in force at midnight on 1 January, then one per change
-/// of offset during the year, found by comparing day boundaries and
-/// bisecting to the second.
-fn observances(tz: Tz, year: i32) -> Vec<Component> {
-    let start = year_start(tz, year);
-    let end = year_start(tz, year + 1);
-    let mut list = vec![observance(
-        start.naive_local(),
-        start.offset(),
-        start.offset(),
-    )];
-    let mut previous = start;
-    let mut probe = start;
-    while probe < end {
-        let next = (probe + TimeDelta::days(1)).min(end);
-        if next.offset().fix() != previous.offset().fix() {
-            let onset = transition(probe, next);
-            // Written in the wall time of the observance being left, as
-            // RFC 5545 wants.
-            let leaving = onset.with_timezone(&previous.offset().fix()).naive_local();
-            list.push(observance(leaving, previous.offset(), onset.offset()));
-            previous = onset;
-        }
-        probe = next;
-    }
-    list
-}
-
-/// Midnight on 1 January in the zone, or midnight UTC should that wall
-/// time not exist there.
-fn year_start(tz: Tz, year: i32) -> DateTime<Tz> {
-    let midnight = NaiveDate::from_ymd_opt(year, 1, 1)
-        .unwrap_or_default()
-        .and_time(NaiveTime::MIN);
-    tz.from_local_datetime(&midnight)
-        .earliest()
-        .unwrap_or_else(|| tz.from_utc_datetime(&midnight))
-}
-
-/// The first instant after `lo`, to the second, with the offset in force
-/// at `hi`.
-fn transition(mut lo: DateTime<Tz>, mut hi: DateTime<Tz>) -> DateTime<Tz> {
-    while hi - lo > TimeDelta::seconds(1) {
-        let mid = lo + (hi - lo) / 2;
-        if mid.offset().fix() == lo.offset().fix() {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    hi
-}
-
-fn observance(
-    onset_wall: NaiveDateTime,
-    from: &<Tz as TimeZone>::Offset,
-    to: &<Tz as TimeZone>::Offset,
-) -> Component {
-    // tzdb models a few zones with negative daylight saving (Dublin in
-    // winter); both halves of such a year are labelled STANDARD.
-    let kind = if to.dst_offset() > TimeDelta::zero() {
-        "DAYLIGHT"
-    } else {
-        "STANDARD"
-    };
-    let mut c = Component::new(kind);
-    c.set(Property::new(
-        "DTSTART",
-        onset_wall.format(DATE_TIME).to_string(),
-    ));
-    c.set(Property::new(
-        "TZOFFSETFROM",
-        utc_offset(from.fix().local_minus_utc()),
-    ));
-    c.set(Property::new(
-        "TZOFFSETTO",
-        utc_offset(to.fix().local_minus_utc()),
-    ));
-    if let Some(name) = to.abbreviation() {
-        c.set(Property::new("TZNAME", name));
-    }
-    c
-}
-
-/// `+0200` style offsets.
-fn utc_offset(seconds: i32) -> String {
-    let sign = if seconds < 0 { '-' } else { '+' };
-    let total = seconds.abs() / 60;
-    format!("{sign}{:02}{:02}", total / 60, total % 60)
-}
-
-/// Makes sure the file's VTIMEZONE for a zone covers `year`. One written
-/// with RRULEs (Apple, Tasks.org) covers every year; one of husk's
-/// per-year ones gets the observances of the years it lacks.
-fn ensure_vtimezone(root: &mut Component, tz: Tz, year: i32) {
-    let index = root.entries.iter().position(|entry| {
-        matches!(entry, Entry::Component(c)
-            if c.is("VTIMEZONE") && c.prop("TZID").is_some_and(|p| p.value.trim() == tz.name()))
-    });
-    let Some(index) = index else {
-        let at = root
-            .entries
-            .iter()
-            .position(|e| matches!(e, Entry::Component(c) if c.is("VTODO")))
-            .unwrap_or(root.entries.len());
-        root.entries
-            .insert(at, Entry::Component(vtimezone(tz, year)));
-        return;
-    };
-    let Entry::Component(component) = &mut root.entries[index] else {
-        return;
-    };
-    if component.children().any(|c| c.prop("RRULE").is_some()) {
-        return;
-    }
-    let years: Vec<i32> = component
-        .children()
-        .filter_map(|c| c.prop("DTSTART"))
-        .filter_map(|p| NaiveDateTime::parse_from_str(p.value.trim(), DATE_TIME).ok())
-        .map(|d| d.year())
-        .collect();
-    let missing = match (years.iter().min(), years.iter().max()) {
-        (Some(&first), Some(&last)) if (first..=last).contains(&year) => return,
-        (Some(_), Some(&last)) if year > last => last + 1..=year,
-        (Some(&first), Some(_)) => year..=first - 1,
-        _ => year..=year,
-    };
-    for y in missing {
-        for observance in observances(tz, y) {
-            component.push_child(observance);
-        }
-    }
 }
 
 /// The task's file with the model's changes patched in. Nothing else moves,
@@ -663,80 +489,6 @@ fn parse_alarm(c: &Component) -> Option<Alarm> {
         Anchor::Due
     };
     Some(Alarm::Relative { offset, anchor })
-}
-
-/// Parses an RFC 5545 duration such as `-PT15M`, `P1D` or `P2W`. Values
-/// that do not fit in a `TimeDelta` are rejected rather than overflowed.
-pub fn parse_duration(value: &str) -> Option<TimeDelta> {
-    let value = value.trim();
-    let (negative, rest) = match value.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, value.strip_prefix('+').unwrap_or(value)),
-    };
-    let rest = rest.strip_prefix('P')?;
-    let mut seconds: i64 = 0;
-    let mut number = String::new();
-    let mut in_time = false;
-    let mut components = 0;
-    let mut time_components = 0;
-    for c in rest.chars() {
-        match c {
-            '0'..='9' => number.push(c),
-            'T' if !in_time => in_time = true,
-            'W' | 'D' | 'H' | 'M' | 'S' => {
-                let n: i64 = number.parse().ok()?;
-                number.clear();
-                let unit = match (c, in_time) {
-                    ('W', false) => 7 * 86_400,
-                    ('D', false) => 86_400,
-                    ('H', true) => 3_600,
-                    ('M', true) => 60,
-                    ('S', true) => 1,
-                    _ => return None,
-                };
-                seconds = seconds.checked_add(n.checked_mul(unit)?)?;
-                components += 1;
-                if in_time {
-                    time_components += 1;
-                }
-            }
-            _ => return None,
-        }
-    }
-    if !number.is_empty() || components == 0 || (in_time && time_components == 0) {
-        return None;
-    }
-    TimeDelta::try_seconds(if negative { -seconds } else { seconds })
-}
-
-/// Formats a duration the way `parse_duration` reads it; zero is `PT0S`.
-pub fn format_duration(duration: TimeDelta) -> String {
-    let total = duration.num_seconds();
-    let mut rest = total.abs();
-    let days = rest / 86_400;
-    rest %= 86_400;
-    let hours = rest / 3_600;
-    rest %= 3_600;
-    let minutes = rest / 60;
-    let seconds = rest % 60;
-
-    let mut out = String::from(if total < 0 { "-P" } else { "P" });
-    if days > 0 {
-        out.push_str(&format!("{days}D"));
-    }
-    if hours > 0 || minutes > 0 || seconds > 0 || days == 0 {
-        out.push('T');
-        if hours > 0 {
-            out.push_str(&format!("{hours}H"));
-        }
-        if minutes > 0 {
-            out.push_str(&format!("{minutes}M"));
-        }
-        if seconds > 0 || (hours == 0 && minutes == 0) {
-            out.push_str(&format!("{seconds}S"));
-        }
-    }
-    out
 }
 
 /// Splits a comma-separated value on unescaped commas and unescapes the parts.

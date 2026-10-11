@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Local, TimeZone};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use husk::config::Config;
-use husk::ical::vtodo;
+use husk::ical::tz;
 use husk::store::VdirStore;
 use husk::theme::Theme;
 use husk::ui::app::{App, EditorRequest, EditorTarget, FormField, Mode};
@@ -77,7 +77,7 @@ fn clear_input(app: &mut App) {
 /// The DUE line husk writes for a local wall time, in the zone in effect.
 fn due_line(y: i32, m: u32, d: u32, h: u32, mi: u32) -> String {
     let local = Local.with_ymd_and_hms(y, m, d, h, mi, 0).single().unwrap();
-    match vtodo::local_zone() {
+    match tz::local_zone() {
         Some(tz) => format!(
             "DUE;TZID={}:{}",
             tz.name(),
