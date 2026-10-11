@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Local, NaiveTime, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveTime, TimeDelta, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::alarms::default_alarms;
@@ -18,6 +18,7 @@ use crate::quickadd;
 use crate::recur;
 use crate::store::Store;
 use crate::sync::{SyncState, Syncer};
+use crate::time::{self, Zone};
 
 const UNDO_DEPTH: usize = 20;
 
@@ -978,18 +979,10 @@ impl App {
             self.notify("No due date to advance; complete it on the phone".to_string());
             return;
         };
-        let zone = vtodo::due_zone(task);
-        let wall = move |at: chrono::DateTime<chrono::Utc>| match zone {
-            Some(tz) => at.with_timezone(&tz).naive_local(),
-            None => at.with_timezone(&Local).naive_local(),
-        };
-        let to_utc = move |wall_time: chrono::NaiveDateTime| match zone {
-            Some(tz) => vtodo::wall_to_utc(&tz, wall_time),
-            None => vtodo::wall_to_utc(&Local, wall_time),
-        };
+        let zone = Zone::from_tz(vtodo::due_zone(task));
         let from = match due {
             Due::Date(date) => date,
-            Due::DateTime(at) => wall(at).date(),
+            Due::DateTime(at) => zone.wall(at).date(),
         };
         match recur::advance(rule, from) {
             recur::Advance::Unsupported => {
@@ -1004,11 +997,11 @@ impl App {
                 self.report(result);
             }
             recur::Advance::Next { date, rrule } => {
+                let days = date - from;
                 let next = match due {
                     Due::Date(_) => Due::Date(date),
-                    Due::DateTime(at) => Due::DateTime(to_utc(date.and_time(wall(at).time()))),
+                    Due::DateTime(at) => Due::DateTime(zone.add_days(at, days)),
                 };
-                let days = date - from;
                 let label = format!(
                     "Done, next {}",
                     due_label(Some(next), self.now, &self.config)
@@ -1020,7 +1013,7 @@ impl App {
                     }
                     for alarm in &mut task.alarms {
                         if let Alarm::Absolute(at) = alarm {
-                            *at = to_utc(wall(*at) + days);
+                            *at = zone.add_days(*at, days);
                         }
                     }
                     Ok(())
@@ -1463,11 +1456,10 @@ pub fn bucket(due: Option<Due>, now: DateTime<Local>) -> Bucket {
     if crate::alarms::is_overdue(due, now.to_utc()) {
         return Bucket::Overdue;
     }
-    let date = match due {
-        None => return Bucket::None,
-        Some(Due::Date(date)) => date,
-        Some(Due::DateTime(at)) => at.with_timezone(&Local).date_naive(),
+    let Some(due) = due else {
+        return Bucket::None;
     };
+    let date = time::due_date(due);
     if date == today {
         Bucket::Today
     } else if date <= today + TimeDelta::days(7) {
@@ -1493,7 +1485,7 @@ pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) 
                 let Some(at) = task.completed else {
                     return false;
                 };
-                let days = (now.date_naive() - at.with_timezone(&Local).date_naive()).num_days();
+                let days = (now.date_naive() - time::local_date(at)).num_days();
                 if *view == View::Today {
                     days == 0
                 } else {
@@ -1533,13 +1525,7 @@ pub fn sort_key(
 pub fn instant(due: Due) -> DateTime<Utc> {
     match due {
         Due::DateTime(at) => at,
-        Due::Date(date) => {
-            let midnight = date.and_time(NaiveTime::MIN);
-            Local
-                .from_local_datetime(&midnight)
-                .earliest()
-                .map_or_else(|| midnight.and_utc(), |local| local.to_utc())
-        }
+        Due::Date(date) => time::wall_to_utc(&Local, date.and_time(NaiveTime::MIN)),
     }
 }
 

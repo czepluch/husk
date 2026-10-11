@@ -12,4 +12,5 @@ pub mod recur;
 pub mod store;
 pub mod sync;
 pub mod theme;
+pub mod time;
 pub mod ui;

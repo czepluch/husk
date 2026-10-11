@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::alarms::{fire_times, is_overdue};
 use crate::config::Config;
 use crate::model::{Due, Project, Task, project_name};
+use crate::time::local_date;
 
 /// Fired entries older than this are forgotten.
 const KEEP_DAYS: i64 = 30;
@@ -166,7 +167,7 @@ fn at_or_past_due(due: Option<Due>, at: DateTime<Utc>) -> bool {
     match due {
         None => false,
         Some(Due::DateTime(when)) => at >= when,
-        Some(Due::Date(date)) => date <= at.with_timezone(&Local).date_naive(),
+        Some(Due::Date(date)) => date <= local_date(at),
     }
 }
 

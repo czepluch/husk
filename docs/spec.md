@@ -304,6 +304,7 @@ src/
   quickadd.rs     tokenizer + date parser
   recur.rs        RRULE to words, and one occurrence forward
   alarms.rs       fire-time computation (shared by TUI and notify)
+  time.rs         wall time to UTC (DST gaps), local dates, same wall time n days on
   sync.rs         run vdirsyncer, debounce
   notify.rs       husk notify
   theme.rs        theme files, Base16 mapping, dump; only place colors live (hot reload is in ui/mod.rs)

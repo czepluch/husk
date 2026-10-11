@@ -2,9 +2,10 @@
 //! tokenizer. `due:`, `pri:`, `+tag` and `@project` are recognized; every
 //! other token stays in the summary and parsing never fails.
 
-use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone, Weekday};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, TimeDelta, Weekday};
 
 use crate::model::{Due, Priority};
+use crate::time::wall_to_utc;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QuickAdd {
@@ -143,15 +144,5 @@ fn parse_time(value: &str) -> Option<NaiveTime> {
 /// A wall-clock time today or on a given date, as an instant. A time inside
 /// a DST gap is moved forward by the skipped hour, like everywhere else.
 fn at(date: NaiveDate, time: NaiveTime) -> Due {
-    let wall = date.and_time(time);
-    let instant = Local
-        .from_local_datetime(&wall)
-        .earliest()
-        .or_else(|| {
-            Local
-                .from_local_datetime(&(wall + TimeDelta::hours(1)))
-                .earliest()
-        })
-        .map_or_else(|| wall.and_utc(), |local| local.to_utc());
-    Due::DateTime(instant)
+    Due::DateTime(wall_to_utc(&Local, date.and_time(time)))
 }

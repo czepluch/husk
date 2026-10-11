@@ -19,6 +19,7 @@ use chrono_tz::{OffsetComponents, OffsetName, Tz};
 
 use crate::ical::codec::{self, Component, Document, Entry, Param, Property};
 use crate::model::{Alarm, Anchor, Due, NewTask, Priority, ProjectId, Status, Task};
+use crate::time::{due_date, wall_to_utc};
 
 const DATE: &str = "%Y%m%d";
 const DATE_TIME: &str = "%Y%m%dT%H%M%S";
@@ -613,14 +614,7 @@ fn is_param(param: &Param, name: &str) -> bool {
 fn is_after(start: Due, due: Due) -> bool {
     match (start, due) {
         (Due::DateTime(s), Due::DateTime(d)) => s > d,
-        (s, d) => local_date(s) > local_date(d),
-    }
-}
-
-fn local_date(due: Due) -> NaiveDate {
-    match due {
-        Due::Date(d) => d,
-        Due::DateTime(t) => t.with_timezone(&Local).date_naive(),
+        (s, d) => due_date(s) > due_date(d),
     }
 }
 
@@ -644,19 +638,6 @@ fn parse_due(p: &Property) -> Option<Due> {
         None => wall_to_utc(&Local, wall),
     };
     Some(Due::DateTime(instant))
-}
-
-/// In a DST gap the wall time does not exist; it is moved forward by the
-/// hour the clocks skipped, which keeps it after the times before the gap.
-/// An ambiguous time (clocks set back) takes its first occurrence.
-pub(crate) fn wall_to_utc<Z: TimeZone>(zone: &Z, wall: NaiveDateTime) -> DateTime<Utc> {
-    zone.from_local_datetime(&wall)
-        .earliest()
-        .or_else(|| {
-            zone.from_local_datetime(&(wall + TimeDelta::hours(1)))
-                .earliest()
-        })
-        .map_or_else(|| wall.and_utc(), |dt| dt.with_timezone(&Utc))
 }
 
 fn parse_utc(value: &str) -> Option<DateTime<Utc>> {
