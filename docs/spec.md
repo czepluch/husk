@@ -293,11 +293,14 @@ src/
   lib.rs          module declarations only
   main.rs         clap: tui (default) | add | list | notify | sync; --config picks a config file
   cli.rs          husk add and husk list, same rules as the TUI
+  agenda.rs       views, sort order, subtask nesting, due and alarm texts (TUI and husk list)
   config.rs       ~/.config/husk/config.toml via serde + toml
   model.rs        Task, Project, Due, Alarm, Priority, Status
   ical/
     codec.rs      unfold/fold, escape, parse to IcalComponent, serialize
     vtodo.rs      IcalComponent <-> Task, property-level patching
+    tz.rs         zone for new values, VTIMEZONE generation
+    duration.rs   RFC 5545 durations for alarm triggers
   store/
     mod.rs        Store trait
     vdir.rs       VdirStore

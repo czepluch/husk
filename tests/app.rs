@@ -4,13 +4,14 @@ use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::fs;
 
+use husk::agenda::{self, Bucket, View};
 use husk::config::Config;
 use husk::ical::codec;
 use husk::ical::vtodo;
 use husk::model::{Due, ProjectId, Task};
 use husk::store::VdirStore;
 use husk::theme::Theme;
-use husk::ui::app::{self, App, Bucket, Mode, Pane, View};
+use husk::ui::app::{App, Mode, Pane};
 use husk::ui::{self, views};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -159,21 +160,21 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
 
 #[test]
 fn buckets_follow_the_local_calendar() {
-    assert_eq!(app::bucket(None, now()), Bucket::None);
+    assert_eq!(agenda::bucket(None, now()), Bucket::None);
     assert_eq!(
-        app::bucket(Some(Due::Date(date(2026, 8, 30))), now()),
+        agenda::bucket(Some(Due::Date(date(2026, 8, 30))), now()),
         Bucket::Overdue
     );
     assert_eq!(
-        app::bucket(Some(Due::Date(date(2026, 8, 31))), now()),
+        agenda::bucket(Some(Due::Date(date(2026, 8, 31))), now()),
         Bucket::Today
     );
     assert_eq!(
-        app::bucket(Some(Due::Date(date(2026, 9, 7))), now()),
+        agenda::bucket(Some(Due::Date(date(2026, 9, 7))), now()),
         Bucket::Soon
     );
     assert_eq!(
-        app::bucket(Some(Due::Date(date(2026, 9, 8))), now()),
+        agenda::bucket(Some(Due::Date(date(2026, 9, 8))), now()),
         Bucket::Later
     );
     let early = task(
@@ -184,7 +185,7 @@ fn buckets_follow_the_local_calendar() {
         "",
     );
     assert_eq!(
-        app::bucket(early.due, now()),
+        agenda::bucket(early.due, now()),
         Bucket::Overdue,
         "timed and passed"
     );
@@ -195,7 +196,7 @@ fn buckets_follow_the_local_calendar() {
         Some(&format!("DUE:{}", local_utc(2026, 8, 31, 15, 0))),
         "",
     );
-    assert_eq!(app::bucket(later.due, now()), Bucket::Today);
+    assert_eq!(agenda::bucket(later.due, now()), Bucket::Today);
 }
 
 #[test]
@@ -296,7 +297,7 @@ fn priority_then_creation_break_ties_on_equal_due() {
 #[test]
 fn due_labels_are_short_and_relative() {
     let config = Config::default();
-    let label = |due: Option<Due>| app::due_label(due, now(), &config);
+    let label = |due: Option<Due>| agenda::due_label(due, now(), &config);
     assert_eq!(label(None), "-");
     assert_eq!(label(Some(Due::Date(date(2026, 8, 31)))), "today");
     assert_eq!(label(Some(Due::Date(date(2026, 8, 30)))), "Sun");
@@ -320,15 +321,15 @@ fn due_labels_are_short_and_relative() {
     assert_eq!(label(thursday.due), "Thu 10:00");
 
     assert_eq!(
-        app::due_detail(Due::Date(date(2026, 9, 3)), now(), &config),
+        agenda::due_detail(Due::Date(date(2026, 9, 3)), now(), &config),
         "2026-09-03 (in 3 days)"
     );
     assert_eq!(
-        app::due_detail(Due::Date(date(2026, 8, 30)), now(), &config),
+        agenda::due_detail(Due::Date(date(2026, 8, 30)), now(), &config),
         "2026-08-30 (yesterday)"
     );
     assert_eq!(
-        app::due_detail(today.due.unwrap(), now(), &config),
+        agenda::due_detail(today.due.unwrap(), now(), &config),
         "2026-08-31 15:00 (today)"
     );
 }
@@ -811,7 +812,7 @@ fn alarm_texts_read_naturally() {
     use husk::model::{Alarm, Anchor};
     let config = Config::default();
     let rel = |secs: i64, anchor: Anchor| {
-        app::alarm_text(
+        agenda::alarm_text(
             &Alarm::Relative {
                 offset: TimeDelta::seconds(secs),
                 anchor,
@@ -825,7 +826,7 @@ fn alarm_texts_read_naturally() {
     assert_eq!(rel(-3600, Anchor::Due), "1h before due");
     assert_eq!(rel(86_400, Anchor::Due), "1d after due");
     assert_eq!(rel(-90, Anchor::Due), "90s before due");
-    let absolute = app::alarm_text(&Alarm::Absolute(local_utc_at(2026, 9, 3, 9, 0)), &config);
+    let absolute = agenda::alarm_text(&Alarm::Absolute(local_utc_at(2026, 9, 3, 9, 0)), &config);
     assert_eq!(absolute, "2026-09-03 09:00");
 }
 

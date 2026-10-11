@@ -6,12 +6,12 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use serde::Serialize;
 
+use crate::agenda::{Bucket, View, bucket, due_label, in_view, nest, sort_key};
 use crate::alarms;
 use crate::config::Config;
 use crate::model::{Due, NewTask, Priority, Project, ProjectId, Task, find_project, project_name};
 use crate::quickadd;
 use crate::store::Store;
-use crate::ui::app::{Bucket, View, bucket, due_label, in_view, nest, sort_key};
 
 /// One task as `husk list` reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

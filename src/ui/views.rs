@@ -8,10 +8,8 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::app::{
-    App, Bucket, FORM_FIELDS, FormField, InputKind, Mode, Pane, SMART_VIEWS, View, alarm_text,
-    bucket, byte_of, due_detail, due_label, stamp,
-};
+use super::app::{App, FORM_FIELDS, FormField, InputKind, Mode, Pane, SMART_VIEWS, byte_of};
+use crate::agenda::{Bucket, View, alarm_text, bucket, due_detail, due_label, stamp};
 use crate::model::{Priority, Status, Task};
 use crate::recur;
 use crate::theme::Theme;

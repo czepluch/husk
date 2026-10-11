@@ -3,7 +3,8 @@ mod common;
 use chrono::{DateTime, Local, NaiveDate, TimeDelta, TimeZone, Utc};
 use chrono_tz::Tz;
 use husk::ical::codec;
-use husk::ical::vtodo::{self, format_duration, parse_duration};
+use husk::ical::duration::{format_duration, parse_duration};
+use husk::ical::{tz, vtodo};
 use husk::model::{Alarm, Anchor, Due, NewTask, Priority, ProjectId, Status, Task};
 
 fn load(name: &str) -> Task {
@@ -30,7 +31,7 @@ fn text_in(task: &Task, zone: Tz) -> String {
 }
 
 fn tz_text(zone: Tz, year: i32) -> String {
-    codec::serialize(&codec::Document::new(vtodo::vtimezone(zone, year)))
+    codec::serialize(&codec::Document::new(tz::vtimezone(zone, year)))
 }
 
 /// Lines present in `after` that were not in `before`.
@@ -746,7 +747,7 @@ fn a_generated_file_round_trips_unchanged() {
 
 #[test]
 fn the_zone_comes_from_tz_when_it_is_a_name_else_from_the_system() {
-    use vtodo::zone_named;
+    use tz::zone_named;
     assert_eq!(
         zone_named(Some("Europe/Oslo"), Some("Europe/Copenhagen")),
         Some(Tz::Europe__Oslo)
