@@ -144,7 +144,9 @@ fn the_alarm_policy_follows_the_due_date() {
     let absolute = Alarm::Absolute(utc(2026, 9, 3, 18, 0, 0));
     task.alarms.push(absolute);
     alarms::set_due(&mut task, Some(at), &["5m".to_string()]);
-    assert_eq!(task.alarms.len(), 4, "existing alarms are kept");
+    let mut kept = default_alarms(&leads());
+    kept.push(absolute);
+    assert_eq!(task.alarms, kept, "existing alarms are kept, no 5m added");
     alarms::set_due(&mut task, None, &leads());
     assert_eq!(task.due, None);
     assert_eq!(

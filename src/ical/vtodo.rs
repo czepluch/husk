@@ -19,7 +19,7 @@ use chrono_tz::{OffsetComponents, OffsetName, Tz};
 
 use crate::ical::codec::{self, Component, Document, Entry, Param, Property};
 use crate::model::{Alarm, Anchor, Due, NewTask, Priority, ProjectId, Status, Task};
-use crate::time::{due_date, wall_to_utc};
+use crate::time::{Zone, due_date};
 
 const DATE: &str = "%Y%m%d";
 const DATE_TIME: &str = "%Y%m%dT%H%M%S";
@@ -633,11 +633,8 @@ fn parse_due(p: &Property) -> Option<Due> {
     }
     let wall = NaiveDateTime::parse_from_str(value, DATE_TIME).ok()?;
     // A TZID chrono-tz does not know, or none at all (floating), means local.
-    let instant = match p.param("TZID").and_then(|z| Tz::from_str(z).ok()) {
-        Some(tz) => wall_to_utc(&tz, wall),
-        None => wall_to_utc(&Local, wall),
-    };
-    Some(Due::DateTime(instant))
+    let zone = Zone::from_tz(p.param("TZID").and_then(|z| Tz::from_str(z).ok()));
+    Some(Due::DateTime(zone.to_utc(wall)))
 }
 
 fn parse_utc(value: &str) -> Option<DateTime<Utc>> {
