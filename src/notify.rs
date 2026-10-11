@@ -5,7 +5,6 @@
 //! everything that came due in between, once.
 
 use std::fs::{self, File};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -14,6 +13,7 @@ use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::alarms::{fire_times, is_overdue};
+use crate::atomic::write_atomic;
 use crate::config::Config;
 use crate::model::{Due, Project, Task, project_name};
 use crate::time::local_date;
@@ -74,12 +74,7 @@ impl State {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         }
-        let text = serde_json::to_string_pretty(self)?;
-        let tmp = path.with_extension("json.tmp");
-        let mut file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&tmp, path).with_context(|| format!("rename to {}", path.display()))
+        write_atomic(path, &serde_json::to_string_pretty(self)?)
     }
 }
 

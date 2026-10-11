@@ -5,15 +5,15 @@
 //! bumps `SEQUENCE`, `LAST-MODIFIED` and `DTSTAMP`, which is how the phone
 //! clients decide which side wins.
 
-use std::fs::{self, File};
+use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::atomic::write_atomic;
 use crate::ical::{codec, vtodo};
 use crate::model::{NewTask, Project, ProjectId, Task};
 use crate::store::Store;
@@ -253,27 +253,4 @@ fn read_trimmed(path: &Path) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-}
-
-fn write_atomic(path: &Path, text: &str) -> Result<()> {
-    let dir = path.parent().context("path without a directory")?;
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .context("path without a file name")?;
-    let tmp = dir.join(format!("{name}.tmp"));
-    let written = (|| -> Result<()> {
-        let mut file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&tmp, path)
-            .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))
-    })();
-    if written.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    written?;
-    // The rename itself has to reach disk before the write counts as done.
-    File::open(dir)?.sync_all()?;
-    Ok(())
 }
