@@ -172,8 +172,7 @@ fn due_text(due: Option<Due>, config: &Config) -> String {
         Some(Due::Date(date)) => format!("Due {}", date.format(&config.date_format)),
         Some(Due::DateTime(at)) => format!(
             "Due {}",
-            at.with_timezone(&Local)
-                .format(&format!("{} {}", config.date_format, config.time_format))
+            at.with_timezone(&Local).format(&config.date_time_format())
         ),
     }
 }

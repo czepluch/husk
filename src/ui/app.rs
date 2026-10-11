@@ -1537,8 +1537,10 @@ pub fn due_detail(due: Due, now: DateTime<Local>, config: &Config) -> String {
         Due::Date(date) => (date.format(&config.date_format).to_string(), date),
         Due::DateTime(at) => {
             let local = at.with_timezone(&Local);
-            let format = format!("{} {}", config.date_format, config.time_format);
-            (local.format(&format).to_string(), local.date_naive())
+            (
+                local.format(&config.date_time_format()).to_string(),
+                local.date_naive(),
+            )
         }
     };
     let relative = match (date - now.date_naive()).num_days() {
@@ -1554,8 +1556,9 @@ pub fn due_detail(due: Due, now: DateTime<Local>, config: &Config) -> String {
 
 /// A timestamp in local time, for the detail view.
 pub fn stamp(at: DateTime<Utc>, config: &Config) -> String {
-    let format = format!("{} {}", config.date_format, config.time_format);
-    at.with_timezone(&Local).format(&format).to_string()
+    at.with_timezone(&Local)
+        .format(&config.date_time_format())
+        .to_string()
 }
 
 pub fn alarm_text(alarm: &Alarm, config: &Config) -> String {
