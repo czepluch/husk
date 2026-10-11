@@ -2,6 +2,7 @@
 //! lives in. Everything husk does not model stays inside the raw document.
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+use serde::Serialize;
 
 use crate::ical::codec::Document;
 
@@ -74,7 +75,8 @@ impl Status {
 }
 
 /// Ordered so that sorting ascending puts the most urgent first.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Priority {
     High,
     Medium,
@@ -101,6 +103,26 @@ impl Priority {
             Self::Medium => 5,
             Self::Low => 9,
             Self::None => 0,
+        }
+    }
+
+    /// The name the form and `husk list --json` use.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+            Self::None => "none",
+        }
+    }
+
+    /// The marker column in the task list and `husk list`.
+    pub fn marker(self) -> &'static str {
+        match self {
+            Self::High => "!!!",
+            Self::Medium => "!!",
+            Self::Low => "!",
+            Self::None => "",
         }
     }
 }
