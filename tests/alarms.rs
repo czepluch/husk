@@ -1,9 +1,9 @@
 mod common;
 
 use chrono::{DateTime, Local, NaiveDate, TimeDelta, TimeZone, Utc};
-use husk::alarms::{default_alarms, fire_times, parse_lead};
+use husk::alarms::{self, default_alarms, fire_times, parse_lead};
 use husk::ical::vtodo;
-use husk::model::{Alarm, Anchor, ProjectId, Task};
+use husk::model::{Alarm, Anchor, Due, ProjectId, Task};
 
 fn load(name: &str) -> Task {
     vtodo::parse_task(&common::fixture(name), ProjectId::new("p")).unwrap()
@@ -120,5 +120,36 @@ fn duplicate_instants_collapse_and_times_are_sorted() {
         fire_times(&task, &leads()),
         vec![utc(2026, 9, 1, 7, 0, 0), utc(2026, 9, 1, 8, 0, 0)],
         "a START-relative alarm without DTSTART is skipped"
+    );
+}
+
+#[test]
+fn the_alarm_policy_follows_the_due_date() {
+    let at = Due::DateTime(utc(2026, 9, 4, 8, 0, 0));
+    let date = Due::Date(NaiveDate::from_ymd_opt(2026, 9, 4).unwrap());
+    assert_eq!(
+        alarms::for_new(Some(at), &leads()),
+        default_alarms(&leads())
+    );
+    assert!(alarms::for_new(Some(date), &leads()).is_empty());
+    assert!(alarms::for_new(None, &leads()).is_empty());
+
+    let mut task = load("apple/no-due.ics");
+    assert!(task.alarms.is_empty());
+    alarms::set_due(&mut task, Some(date), &leads());
+    assert!(task.alarms.is_empty(), "an all-day due gets no alarm");
+    alarms::set_due(&mut task, Some(at), &leads());
+    assert_eq!(task.alarms, default_alarms(&leads()), "a timed one does");
+
+    let absolute = Alarm::Absolute(utc(2026, 9, 3, 18, 0, 0));
+    task.alarms.push(absolute);
+    alarms::set_due(&mut task, Some(at), &["5m".to_string()]);
+    assert_eq!(task.alarms.len(), 4, "existing alarms are kept");
+    alarms::set_due(&mut task, None, &leads());
+    assert_eq!(task.due, None);
+    assert_eq!(
+        task.alarms,
+        vec![absolute],
+        "only the absolute one survives"
     );
 }

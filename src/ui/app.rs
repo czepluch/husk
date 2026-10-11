@@ -10,7 +10,7 @@ use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Local, NaiveTime, TimeDelta, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::alarms::default_alarms;
+use crate::alarms;
 use crate::config::Config;
 use crate::ical::{codec, vtodo};
 use crate::model::{Alarm, Anchor, Due, NewTask, Priority, Project, ProjectId, Task};
@@ -674,18 +674,7 @@ impl App {
                 };
                 let leads = self.config.default_alarm_leads.clone();
                 self.change(uid, "Due set", move |task| {
-                    task.due = due;
-                    match due {
-                        // A timed due date notifies on the phones only through an alarm.
-                        Some(Due::DateTime(_)) if task.alarms.is_empty() => {
-                            task.alarms = default_alarms(&leads);
-                        }
-                        // Relative alarms have nothing left to count from.
-                        None => task
-                            .alarms
-                            .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
-                        _ => {}
-                    }
+                    alarms::set_due(task, due, &leads);
                     Ok(())
                 })
             }
@@ -860,17 +849,13 @@ impl App {
         let leads = self.config.default_alarm_leads.clone();
         match &form.uid {
             None => {
-                let alarms = match due {
-                    Some(Due::DateTime(_)) => default_alarms(&leads),
-                    _ => Vec::new(),
-                };
                 let new = NewTask {
                     summary: parsed.summary.clone(),
                     description: (!notes.is_empty()).then_some(notes),
                     due,
                     priority,
                     tags,
-                    alarms,
+                    alarms: alarms::for_new(due, &leads),
                 };
                 let task = self.store.create(&project, new)?;
                 self.push_undo(Undo::Created(task.uid.clone()));
@@ -895,19 +880,7 @@ impl App {
                 task.tags = tags;
                 task.description = (!notes.is_empty()).then_some(notes);
                 if due_touched && task.due != due {
-                    task.due = due;
-                    match due {
-                        // A timed due notifies on the phones only through
-                        // an alarm.
-                        Some(Due::DateTime(_)) if task.alarms.is_empty() => {
-                            task.alarms = default_alarms(&leads);
-                        }
-                        // Relative alarms have nothing left to count from.
-                        None => task
-                            .alarms
-                            .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
-                        _ => {}
-                    }
+                    alarms::set_due(&mut task, due, &leads);
                 }
                 if let Err(e) = self.store.save(&mut task) {
                     self.reload();

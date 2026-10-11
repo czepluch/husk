@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use serde::Serialize;
 
-use crate::alarms::default_alarms;
+use crate::alarms;
 use crate::config::Config;
 use crate::model::{Due, NewTask, Priority, Project, ProjectId, Task, find_project, project_name};
 use crate::quickadd;
@@ -115,10 +115,6 @@ pub fn add(store: &dyn Store, config: &Config, text: &str, now: DateTime<Local>)
         .with_context(|| format!("no project named {name:?}"))?
         .id
         .clone();
-    let alarms = match parsed.due {
-        Some(Due::DateTime(_)) => default_alarms(&config.default_alarm_leads),
-        _ => Vec::new(),
-    };
     store.create(
         &project,
         NewTask {
@@ -127,7 +123,7 @@ pub fn add(store: &dyn Store, config: &Config, text: &str, now: DateTime<Local>)
             due: parsed.due,
             priority: parsed.priority,
             tags: parsed.tags,
-            alarms,
+            alarms: alarms::for_new(parsed.due, &config.default_alarm_leads),
         },
     )
 }

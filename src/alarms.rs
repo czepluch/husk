@@ -42,6 +42,30 @@ pub fn default_alarms(leads: &[String]) -> Vec<Alarm> {
     alarms
 }
 
+/// The alarms a new task starts with: the defaults when it has a due time,
+/// none otherwise.
+pub fn for_new(due: Option<Due>, leads: &[String]) -> Vec<Alarm> {
+    match due {
+        Some(Due::DateTime(_)) => default_alarms(leads),
+        _ => Vec::new(),
+    }
+}
+
+/// Sets a task's due date and keeps its alarms meaningful. A timed due on
+/// a task without alarms gets the defaults, since the phones notify only
+/// through an alarm; clearing the due drops relative alarms, which have
+/// nothing left to count from.
+pub fn set_due(task: &mut Task, due: Option<Due>, leads: &[String]) {
+    task.due = due;
+    match due {
+        Some(Due::DateTime(_)) if task.alarms.is_empty() => task.alarms = default_alarms(leads),
+        None => task
+            .alarms
+            .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
+        _ => {}
+    }
+}
+
 /// When a task's alarms fire, in UTC, sorted and without duplicates.
 /// Relative triggers count from the due instant (`RELATED=END`) or the
 /// start (`RELATED=START`, skipped when there is no `DTSTART`). A timed
