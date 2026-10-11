@@ -293,6 +293,7 @@ src/
   lib.rs          module declarations only
   main.rs         clap: tui (default) | add | list | notify | sync; --config picks a config file
   cli.rs          husk add and husk list, same rules as the TUI
+  agenda.rs       views, sort order, subtask nesting, due and alarm texts (TUI and husk list)
   config.rs       ~/.config/husk/config.toml via serde + toml
   model.rs        Task, Project, Due, Alarm, Priority, Status
   ical/

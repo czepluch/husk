@@ -3,13 +3,14 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
+use husk::agenda::View;
 use husk::config::Config;
 use husk::model::{ProjectId, find_project, project_name};
 use husk::notify::State;
 use husk::store::{Store, VdirStore};
 use husk::sync;
 use husk::theme::Theme;
-use husk::ui::app::{App, View};
+use husk::ui::app::App;
 use husk::{cli, ui};
 
 /// CalDAV tasks in the terminal.
