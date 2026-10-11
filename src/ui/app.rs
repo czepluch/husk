@@ -2,6 +2,8 @@
 //! decided in `agenda.rs`; rendering lives in `views.rs`. Every write goes
 //! through the `Store`, is followed by a reload, and asks the syncer to run.
 
+use std::collections::VecDeque;
+
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -193,7 +195,7 @@ pub struct App {
     /// Shown in the bar until the next key or for a few seconds.
     pub message: Option<String>,
     message_at: DateTime<Local>,
-    undo: Vec<Undo>,
+    undo: VecDeque<Undo>,
     editor_request: Option<EditorRequest>,
     seen_runs: u64,
     /// The store's change stamp at the last reload.
@@ -235,7 +237,7 @@ impl App {
             pick_uid: None,
             message: None,
             message_at: now,
-            undo: Vec::new(),
+            undo: VecDeque::new(),
             editor_request: None,
             seen_runs: 0,
             stamp,
@@ -491,7 +493,7 @@ impl App {
             }
             KeyCode::Char('t') => {
                 if let Some(task) = self.selected_task() {
-                    let (uid, text) = (task.uid.clone(), due_input(task.due, &self.config));
+                    let (uid, text) = (task.uid.clone(), due_input(task.due));
                     self.start_input(InputKind::Due, text, uid);
                 }
             }
@@ -669,7 +671,7 @@ impl App {
     fn open_form(&mut self, uid: Option<&str>) {
         let form = match uid.and_then(|uid| self.tasks.iter().find(|t| t.uid == uid)) {
             Some(task) => {
-                let due = due_input(task.due, &self.config);
+                let due = due_input(task.due);
                 Form {
                     uid: Some(task.uid.clone()),
                     title: task.summary.clone(),
@@ -1084,7 +1086,7 @@ impl App {
     }
 
     fn undo(&mut self) {
-        let Some(entry) = self.undo.pop() else {
+        let Some(entry) = self.undo.pop_back() else {
             self.notify("Nothing to undo".to_string());
             return;
         };
@@ -1118,9 +1120,9 @@ impl App {
     }
 
     fn push_undo(&mut self, entry: Undo) {
-        self.undo.push(entry);
+        self.undo.push_back(entry);
         if self.undo.len() > UNDO_DEPTH {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
     }
 
@@ -1337,7 +1339,7 @@ fn step(index: usize, delta: isize, len: usize) -> usize {
 
 /// The text the due prompt starts with: what the task has now, in the
 /// forms the prompt reads back.
-pub fn due_input(due: Option<Due>, _config: &Config) -> String {
+fn due_input(due: Option<Due>) -> String {
     match due {
         None => String::new(),
         Some(Due::Date(date)) => date.format("%Y-%m-%d").to_string(),

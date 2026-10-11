@@ -124,7 +124,9 @@ pub fn edit_with_editor(text: &str, extension: &str) -> Result<String> {
 /// Runs one editor command on a temp file holding `text`; the extension
 /// lets the editor pick its mode.
 pub fn edit_with(editor: &str, text: &str, extension: &str) -> Result<String> {
-    let path = std::env::temp_dir().join(format!("husk-edit-{}.{extension}", std::process::id()));
+    // A fresh random name, created exclusively: a fixed name in a shared
+    // temp directory could be planted beforehand as a symlink.
+    let path = std::env::temp_dir().join(format!("husk-edit-{}.{extension}", uuid::Uuid::new_v4()));
     write_private(&path, text).with_context(|| format!("write {}", path.display()))?;
     // Through the shell so an editor setting with arguments ("code --wait") works.
     let status = Command::new("sh")
@@ -145,14 +147,14 @@ pub fn edit_with(editor: &str, text: &str, extension: &str) -> Result<String> {
     result
 }
 
-/// Writes a file readable by the owner only; notes are private.
+/// Creates a new file readable by the owner only; notes are private.
+/// Fails rather than follow anything already at `path`.
 fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
         .open(path)?;
     file.write_all(text.as_bytes())
