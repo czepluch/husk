@@ -5,6 +5,9 @@ Keep a Changelog.
 
 ## Unreleased
 
+- The due prompt and the form's due field refuse text with words left
+  over after the date (`tomorrow lunch`) instead of silently dropping them.
+
 - `contrib/husk-capture`: a quick-capture script for a launcher keybind
   that prompts with fuzzel, runs `husk add` and reports the outcome
   through the notification daemon.

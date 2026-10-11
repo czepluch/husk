@@ -6,7 +6,9 @@
 
 use std::fmt::Write;
 
-use chrono::{Datelike, Days, Local, NaiveDate, NaiveDateTime, Weekday};
+use chrono::{Datelike, Days, NaiveDate, NaiveDateTime, Weekday};
+
+use crate::time::local_date;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Freq {
@@ -227,7 +229,7 @@ fn until_date(value: &str) -> Option<NaiveDate> {
     if let Some(utc) = value.strip_suffix('Z')
         && let Ok(at) = NaiveDateTime::parse_from_str(utc, "%Y%m%dT%H%M%S")
     {
-        return Some(at.and_utc().with_timezone(&Local).date_naive());
+        return Some(local_date(at.and_utc()));
     }
     NaiveDate::parse_from_str(value.get(..8)?, "%Y%m%d").ok()
 }

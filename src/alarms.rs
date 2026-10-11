@@ -1,9 +1,10 @@
 //! Alarm defaults and fire times, shared by the TUI, the CLI and the
 //! notifier.
 
-use chrono::{DateTime, Local, NaiveTime, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveTime, TimeDelta, Utc};
 
 use crate::model::{Alarm, Anchor, Due, Task};
+use crate::time;
 
 /// All-day dates have no time; their alarms count from this local hour.
 const ALL_DAY_HOUR: u32 = 9;
@@ -39,6 +40,30 @@ pub fn default_alarms(leads: &[String]) -> Vec<Alarm> {
         }
     }
     alarms
+}
+
+/// The alarms a new task starts with: the defaults when it has a due time,
+/// none otherwise.
+pub fn for_new(due: Option<Due>, leads: &[String]) -> Vec<Alarm> {
+    match due {
+        Some(Due::DateTime(_)) => default_alarms(leads),
+        _ => Vec::new(),
+    }
+}
+
+/// Sets a task's due date and keeps its alarms meaningful. A timed due on
+/// a task without alarms gets the defaults, since the phones notify only
+/// through an alarm; clearing the due drops relative alarms, which have
+/// nothing left to count from.
+pub fn set_due(task: &mut Task, due: Option<Due>, leads: &[String]) {
+    task.due = due;
+    match due {
+        Some(Due::DateTime(_)) if task.alarms.is_empty() => task.alarms = default_alarms(leads),
+        None => task
+            .alarms
+            .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
+        _ => {}
+    }
 }
 
 /// When a task's alarms fire, in UTC, sorted and without duplicates.
@@ -84,7 +109,7 @@ pub fn is_overdue(due: Option<Due>, now: DateTime<Utc>) -> bool {
     match due {
         None => false,
         Some(Due::DateTime(at)) => at < now,
-        Some(Due::Date(date)) => date < now.with_timezone(&Local).date_naive(),
+        Some(Due::Date(date)) => date < time::local_date(now),
     }
 }
 
@@ -96,15 +121,7 @@ fn anchor(due: Due) -> DateTime<Utc> {
         Due::Date(date) => {
             let wall =
                 date.and_time(NaiveTime::from_hms_opt(ALL_DAY_HOUR, 0, 0).unwrap_or_default());
-            Local
-                .from_local_datetime(&wall)
-                .earliest()
-                .or_else(|| {
-                    Local
-                        .from_local_datetime(&(wall + TimeDelta::hours(1)))
-                        .earliest()
-                })
-                .map_or_else(|| wall.and_utc(), |local| local.to_utc())
+            time::wall_to_utc(&Local, wall)
         }
     }
 }

@@ -1390,3 +1390,36 @@ fn d_advances_a_timed_due_in_its_own_zone_and_keeps_alarm_wall_time() {
     assert!(text.contains("RRULE:FREQ=WEEKLY\n"), "{text}");
     assert!(text.contains("STATUS:NEEDS-ACTION\n"), "{text}");
 }
+
+#[test]
+fn due_text_with_leftover_words_is_refused_not_trimmed() {
+    let mut s = sample();
+    select(&mut s.app, TEST_TASK);
+    s.app.handle_key(key('t'));
+    clear_input(&mut s.app);
+    type_text(&mut s.app, "tomorrow lunch");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Input, "the prompt stays open");
+    assert!(
+        s.app
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("could not read a date")
+    );
+    s.app.handle_key(code(KeyCode::Esc));
+
+    s.app.handle_key(key('a'));
+    type_text(&mut s.app, "buy bread");
+    s.app.handle_key(code(KeyCode::Tab));
+    type_text(&mut s.app, "fri after work");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.mode, Mode::Form, "the form stays open");
+    assert!(
+        s.app
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("could not read a date")
+    );
+}

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use serde::Serialize;
 
-use crate::alarms::default_alarms;
+use crate::alarms;
 use crate::config::Config;
 use crate::model::{Due, NewTask, Priority, Project, ProjectId, Task, find_project, project_name};
 use crate::quickadd;
@@ -24,7 +24,7 @@ pub struct Row {
     pub due: Option<String>,
     pub due_label: String,
     pub overdue: bool,
-    pub priority: &'static str,
+    pub priority: Priority,
     pub tags: Vec<String>,
     pub recurring: bool,
     /// UID of the parent task, when it has one.
@@ -59,12 +59,7 @@ pub fn rows(
             }),
             due_label: due_label(task.due, now, config),
             overdue: bucket(task.due, now) == Bucket::Overdue,
-            priority: match task.priority {
-                Priority::High => "high",
-                Priority::Medium => "medium",
-                Priority::Low => "low",
-                Priority::None => "none",
-            },
+            priority: task.priority,
             tags: task.tags.clone(),
             recurring: task.is_recurring(),
             parent: task.parent.clone(),
@@ -79,12 +74,7 @@ pub fn text(rows: &[Row]) -> String {
     let mut out = String::new();
     for row in rows {
         let flag = if row.overdue { "◂" } else { " " };
-        let marker = match row.priority {
-            "high" => "!!!",
-            "medium" => "!!",
-            "low" => "!",
-            _ => "",
-        };
+        let marker = row.priority.marker();
         let tags: String = row.tags.iter().map(|t| format!(" #{t}")).collect();
         out.push_str(&format!(
             "{flag} {:<width$}  {marker:<3} {}{tags}  [{}]\n",
@@ -115,10 +105,6 @@ pub fn add(store: &dyn Store, config: &Config, text: &str, now: DateTime<Local>)
         .with_context(|| format!("no project named {name:?}"))?
         .id
         .clone();
-    let alarms = match parsed.due {
-        Some(Due::DateTime(_)) => default_alarms(&config.default_alarm_leads),
-        _ => Vec::new(),
-    };
     store.create(
         &project,
         NewTask {
@@ -127,7 +113,7 @@ pub fn add(store: &dyn Store, config: &Config, text: &str, now: DateTime<Local>)
             due: parsed.due,
             priority: parsed.priority,
             tags: parsed.tags,
-            alarms,
+            alarms: alarms::for_new(parsed.due, &config.default_alarm_leads),
         },
     )
 }

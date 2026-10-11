@@ -58,6 +58,11 @@ impl Config {
         Self::parse(&text).with_context(|| format!("parse {}", path.display()))
     }
 
+    /// `date_format` and `time_format` together, for a full timestamp.
+    pub fn date_time_format(&self) -> String {
+        format!("{} {}", self.date_format, self.time_format)
+    }
+
     pub fn parse(text: &str) -> Result<Self> {
         let mut config: Self = toml::from_str(text)?;
         config.vdir = expand_home(&config.vdir);

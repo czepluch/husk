@@ -189,15 +189,6 @@ fn priority_style(priority: Priority, theme: &Theme) -> Style {
     }
 }
 
-fn priority_marker(priority: Priority) -> &'static str {
-    match priority {
-        Priority::High => "!!!",
-        Priority::Medium => "!!",
-        Priority::Low => "!",
-        Priority::None => "",
-    }
-}
-
 /// One list item: flag, due label and priority columns, then the summary,
 /// tags and recurring symbol wrapped by word to the pane width. Continuation
 /// lines sit under the summary column; at most `MAX_ROWS` lines are shown.
@@ -220,7 +211,7 @@ fn task_item<'a>(
         " ".to_string()
     };
     let label = due_label(task.due, app.now, &app.config);
-    let marker = priority_marker(task.priority);
+    let marker = task.priority.marker();
     let prefix = vec![
         Span::styled(format!(" {flag} "), due),
         Span::styled(format!("{label:<label_width$} "), due),
@@ -671,13 +662,14 @@ fn draw_form(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                     }
                 }
                 FormField::Priority => {
-                    let (text, style) = match form.priority {
-                        Priority::High => ("high", theme.pri_high),
-                        Priority::Medium => ("medium", theme.pri_medium),
-                        Priority::Low => ("low", theme.pri_low),
-                        Priority::None => ("none", theme.muted),
+                    let style = match form.priority {
+                        Priority::None => theme.muted,
+                        p => priority_style(p, theme),
                     };
-                    spans.push(Span::styled(format!("< {text} >"), style));
+                    spans.push(Span::styled(
+                        format!("< {} >", form.priority.label()),
+                        style,
+                    ));
                 }
                 FormField::Project => {
                     spans.push(Span::styled(format!("< {project} >"), theme.project));

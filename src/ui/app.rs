@@ -7,10 +7,10 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Local, NaiveTime, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveTime, TimeDelta, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::alarms::default_alarms;
+use crate::alarms;
 use crate::config::Config;
 use crate::ical::{codec, vtodo};
 use crate::model::{Alarm, Anchor, Due, NewTask, Priority, Project, ProjectId, Task};
@@ -18,6 +18,7 @@ use crate::quickadd;
 use crate::recur;
 use crate::store::Store;
 use crate::sync::{SyncState, Syncer};
+use crate::time::{self, Zone};
 
 const UNDO_DEPTH: usize = 20;
 
@@ -669,26 +670,11 @@ impl App {
                 let due = if text.is_empty() {
                     None
                 } else {
-                    Some(
-                        quickadd::parse(&format!("due:{text}"), self.now)
-                            .due
-                            .with_context(|| format!("could not read a date from {text:?}"))?,
-                    )
+                    Some(read_due(text, self.now)?)
                 };
                 let leads = self.config.default_alarm_leads.clone();
                 self.change(uid, "Due set", move |task| {
-                    task.due = due;
-                    match due {
-                        // A timed due date notifies on the phones only through an alarm.
-                        Some(Due::DateTime(_)) if task.alarms.is_empty() => {
-                            task.alarms = default_alarms(&leads);
-                        }
-                        // Relative alarms have nothing left to count from.
-                        None => task
-                            .alarms
-                            .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
-                        _ => {}
-                    }
+                    alarms::set_due(task, due, &leads);
                     Ok(())
                 })
             }
@@ -835,11 +821,7 @@ impl App {
         let due = match (parsed.due, due_text) {
             (Some(due), _) => Some(due),
             (None, "") => None,
-            (None, text) => Some(
-                quickadd::parse(&format!("due:{text}"), self.now)
-                    .due
-                    .with_context(|| format!("could not read a date from {text:?}"))?,
-            ),
+            (None, text) => Some(read_due(text, self.now)?),
         };
         let due_touched = parsed.due.is_some() || due_text != form.initial_due.trim();
         let priority = if parsed.priority == Priority::None {
@@ -867,17 +849,13 @@ impl App {
         let leads = self.config.default_alarm_leads.clone();
         match &form.uid {
             None => {
-                let alarms = match due {
-                    Some(Due::DateTime(_)) => default_alarms(&leads),
-                    _ => Vec::new(),
-                };
                 let new = NewTask {
                     summary: parsed.summary.clone(),
                     description: (!notes.is_empty()).then_some(notes),
                     due,
                     priority,
                     tags,
-                    alarms,
+                    alarms: alarms::for_new(due, &leads),
                 };
                 let task = self.store.create(&project, new)?;
                 self.push_undo(Undo::Created(task.uid.clone()));
@@ -902,19 +880,7 @@ impl App {
                 task.tags = tags;
                 task.description = (!notes.is_empty()).then_some(notes);
                 if due_touched && task.due != due {
-                    task.due = due;
-                    match due {
-                        // A timed due notifies on the phones only through
-                        // an alarm.
-                        Some(Due::DateTime(_)) if task.alarms.is_empty() => {
-                            task.alarms = default_alarms(&leads);
-                        }
-                        // Relative alarms have nothing left to count from.
-                        None => task
-                            .alarms
-                            .retain(|alarm| matches!(alarm, Alarm::Absolute(_))),
-                        _ => {}
-                    }
+                    alarms::set_due(&mut task, due, &leads);
                 }
                 if let Err(e) = self.store.save(&mut task) {
                     self.reload();
@@ -986,18 +952,10 @@ impl App {
             self.notify("No due date to advance; complete it on the phone".to_string());
             return;
         };
-        let zone = vtodo::due_zone(task);
-        let wall = move |at: chrono::DateTime<chrono::Utc>| match zone {
-            Some(tz) => at.with_timezone(&tz).naive_local(),
-            None => at.with_timezone(&Local).naive_local(),
-        };
-        let to_utc = move |wall_time: chrono::NaiveDateTime| match zone {
-            Some(tz) => vtodo::wall_to_utc(&tz, wall_time),
-            None => vtodo::wall_to_utc(&Local, wall_time),
-        };
+        let zone = Zone::from_tz(vtodo::due_zone(task));
         let from = match due {
             Due::Date(date) => date,
-            Due::DateTime(at) => wall(at).date(),
+            Due::DateTime(at) => zone.wall(at).date(),
         };
         match recur::advance(rule, from) {
             recur::Advance::Unsupported => {
@@ -1012,11 +970,11 @@ impl App {
                 self.report(result);
             }
             recur::Advance::Next { date, rrule } => {
+                let days = date - from;
                 let next = match due {
                     Due::Date(_) => Due::Date(date),
-                    Due::DateTime(at) => Due::DateTime(to_utc(date.and_time(wall(at).time()))),
+                    Due::DateTime(at) => Due::DateTime(zone.add_days(at, days)),
                 };
-                let days = date - from;
                 let label = format!(
                     "Done, next {}",
                     due_label(Some(next), self.now, &self.config)
@@ -1028,7 +986,7 @@ impl App {
                     }
                     for alarm in &mut task.alarms {
                         if let Alarm::Absolute(at) = alarm {
-                            *at = to_utc(wall(*at) + days);
+                            *at = zone.add_days(*at, days);
                         }
                     }
                     Ok(())
@@ -1408,6 +1366,12 @@ fn priority_back(priority: Priority) -> Priority {
     }
 }
 
+/// A due date from the prompt or the form's due field.
+fn read_due(text: &str, now: DateTime<Local>) -> Result<Due> {
+    quickadd::parse_due_text(text, now)
+        .with_context(|| format!("could not read a date from {text:?}"))
+}
+
 /// Comma-separated input into clean unique tags; a leading `#` is noise.
 fn split_tags(text: &str) -> Vec<String> {
     let mut tags: Vec<String> = Vec::new();
@@ -1465,11 +1429,10 @@ pub fn bucket(due: Option<Due>, now: DateTime<Local>) -> Bucket {
     if crate::alarms::is_overdue(due, now.to_utc()) {
         return Bucket::Overdue;
     }
-    let date = match due {
-        None => return Bucket::None,
-        Some(Due::Date(date)) => date,
-        Some(Due::DateTime(at)) => at.with_timezone(&Local).date_naive(),
+    let Some(due) = due else {
+        return Bucket::None;
     };
+    let date = time::due_date(due);
     if date == today {
         Bucket::Today
     } else if date <= today + TimeDelta::days(7) {
@@ -1495,7 +1458,7 @@ pub fn in_view(task: &Task, view: &View, now: DateTime<Local>, show_done: bool) 
                 let Some(at) = task.completed else {
                     return false;
                 };
-                let days = (now.date_naive() - at.with_timezone(&Local).date_naive()).num_days();
+                let days = (now.date_naive() - time::local_date(at)).num_days();
                 if *view == View::Today {
                     days == 0
                 } else {
@@ -1535,13 +1498,7 @@ pub fn sort_key(
 pub fn instant(due: Due) -> DateTime<Utc> {
     match due {
         Due::DateTime(at) => at,
-        Due::Date(date) => {
-            let midnight = date.and_time(NaiveTime::MIN);
-            Local
-                .from_local_datetime(&midnight)
-                .earliest()
-                .map_or_else(|| midnight.and_utc(), |local| local.to_utc())
-        }
+        Due::Date(date) => time::wall_to_utc(&Local, date.and_time(NaiveTime::MIN)),
     }
 }
 
@@ -1580,8 +1537,10 @@ pub fn due_detail(due: Due, now: DateTime<Local>, config: &Config) -> String {
         Due::Date(date) => (date.format(&config.date_format).to_string(), date),
         Due::DateTime(at) => {
             let local = at.with_timezone(&Local);
-            let format = format!("{} {}", config.date_format, config.time_format);
-            (local.format(&format).to_string(), local.date_naive())
+            (
+                local.format(&config.date_time_format()).to_string(),
+                local.date_naive(),
+            )
         }
     };
     let relative = match (date - now.date_naive()).num_days() {
@@ -1597,8 +1556,9 @@ pub fn due_detail(due: Due, now: DateTime<Local>, config: &Config) -> String {
 
 /// A timestamp in local time, for the detail view.
 pub fn stamp(at: DateTime<Utc>, config: &Config) -> String {
-    let format = format!("{} {}", config.date_format, config.time_format);
-    at.with_timezone(&Local).format(&format).to_string()
+    at.with_timezone(&Local)
+        .format(&config.date_time_format())
+        .to_string()
 }
 
 pub fn alarm_text(alarm: &Alarm, config: &Config) -> String {

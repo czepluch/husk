@@ -111,3 +111,21 @@ fn unknown_tokens_stay_in_the_summary_and_nothing_errors() {
     assert_eq!(q.due, Some(date(2026, 9, 1)), "the last due wins");
     assert_eq!(q.summary, "");
 }
+
+#[test]
+fn due_text_reads_the_whole_text_or_nothing() {
+    let due = |text: &str| quickadd::parse_due_text(text, now());
+    assert_eq!(due("fri"), Some(date(2026, 9, 4)));
+    assert_eq!(due("  next mon 08:15 "), Some(at(2026, 9, 7, 8, 15)));
+    assert_eq!(due("14:30"), Some(at(2026, 8, 31, 14, 30)));
+    assert_eq!(
+        due("Tomorrow 09:00"),
+        Some(at(2026, 9, 1, 9, 0)),
+        "any case"
+    );
+    assert_eq!(due("NEXT Mon"), Some(date(2026, 9, 7)));
+    assert_eq!(due("tomorrow lunch"), None, "a leftover word is refused");
+    assert_eq!(due("fri 09:00 +tag"), None, "so are grammar tokens");
+    assert_eq!(due("someday"), None);
+    assert_eq!(due(""), None);
+}

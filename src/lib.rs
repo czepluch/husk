@@ -2,6 +2,7 @@
 //! The binary in `main.rs` and the tests in `tests/` build on this crate.
 
 pub mod alarms;
+pub mod atomic;
 pub mod cli;
 pub mod config;
 pub mod ical;
@@ -12,4 +13,5 @@ pub mod recur;
 pub mod store;
 pub mod sync;
 pub mod theme;
+pub mod time;
 pub mod ui;
