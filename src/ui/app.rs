@@ -669,11 +669,7 @@ impl App {
                 let due = if text.is_empty() {
                     None
                 } else {
-                    Some(
-                        quickadd::parse(&format!("due:{text}"), self.now)
-                            .due
-                            .with_context(|| format!("could not read a date from {text:?}"))?,
-                    )
+                    Some(read_due(text, self.now)?)
                 };
                 let leads = self.config.default_alarm_leads.clone();
                 self.change(uid, "Due set", move |task| {
@@ -835,11 +831,7 @@ impl App {
         let due = match (parsed.due, due_text) {
             (Some(due), _) => Some(due),
             (None, "") => None,
-            (None, text) => Some(
-                quickadd::parse(&format!("due:{text}"), self.now)
-                    .due
-                    .with_context(|| format!("could not read a date from {text:?}"))?,
-            ),
+            (None, text) => Some(read_due(text, self.now)?),
         };
         let due_touched = parsed.due.is_some() || due_text != form.initial_due.trim();
         let priority = if parsed.priority == Priority::None {
@@ -1406,6 +1398,12 @@ fn priority_back(priority: Priority) -> Priority {
         Priority::Medium => Priority::High,
         Priority::High => Priority::None,
     }
+}
+
+/// A due date from the prompt or the form's due field.
+fn read_due(text: &str, now: DateTime<Local>) -> Result<Due> {
+    quickadd::parse_due_text(text, now)
+        .with_context(|| format!("could not read a date from {text:?}"))
 }
 
 /// Comma-separated input into clean unique tags; a leading `#` is noise.

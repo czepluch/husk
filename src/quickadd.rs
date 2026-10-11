@@ -53,6 +53,16 @@ pub fn parse(input: &str, now: DateTime<Local>) -> QuickAdd {
     out
 }
 
+/// A due date typed on its own, as in the due prompt and the form's due
+/// field: the whole text must be one date form, so a stray word is refused
+/// rather than dropped.
+pub fn parse_due_text(text: &str, now: DateTime<Local>) -> Option<Due> {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let (first, rest) = tokens.split_first()?;
+    let (due, consumed) = parse_due(first, rest, now)?;
+    (consumed == rest.len()).then_some(due)
+}
+
 fn parse_priority(value: &str) -> Option<Priority> {
     match value.to_ascii_lowercase().as_str() {
         "h" | "high" => Some(Priority::High),
