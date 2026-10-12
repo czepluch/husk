@@ -86,3 +86,32 @@ fn bad_input_is_refused_before_any_request() {
     let error = cli::add_project(&store, &without, "Chores", None).unwrap_err();
     assert!(format!("{error:#}").contains("[caldav]"), "{error:#}");
 }
+
+#[test]
+fn a_failing_password_command_stops_before_any_request() {
+    let dir = common::fixture_vdir();
+    let store = VdirStore::new(dir.path());
+    let server = common::FakeServer::new("201 Created");
+    let mut config = config(&dir, &server.url);
+    config.caldav.as_mut().unwrap().password_command =
+        vec!["sh".to_string(), "-c".to_string(), "exit 3".to_string()];
+    let error = cli::add_project(&store, &config, "Chores", None).unwrap_err();
+    assert!(format!("{error:#}").contains("sh failed"), "{error:#}");
+    assert!(!dir.path().read_dir().unwrap().any(|e| {
+        let name = e.unwrap().file_name();
+        name.len() == 36 && name.to_string_lossy().contains('-')
+    }));
+    drop(server);
+}
+
+#[test]
+fn a_server_error_names_the_status_without_the_xml_body() {
+    let dir = common::fixture_vdir();
+    let store = VdirStore::new(dir.path());
+    let server = common::FakeServer::new("500 Internal Server Error");
+    let config = config(&dir, &server.url);
+    let error = cli::add_project(&store, &config, "Chores", None).unwrap_err();
+    let text = format!("{error:#}");
+    assert!(text.contains("500 Internal Server Error"), "{text}");
+    assert!(!text.contains("s3cret"), "{text}");
+}

@@ -1460,3 +1460,44 @@ fn capital_p_creates_a_list_and_moves_to_it() {
     );
     assert!(s.app.projects.iter().any(|p| p.name == "Chores"));
 }
+
+#[test]
+fn a_discover_request_survives_later_sync_requests_in_the_same_run() {
+    let log = common::TempDir::new();
+    let log_file = log.path().join("calls");
+    let script = log.path().join("vdirsyncer");
+    fs::write(
+        &script,
+        format!("#!/bin/sh\necho \"$@\" >> {}\n", log_file.display()),
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&script).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    fs::set_permissions(&script, perms).unwrap();
+    let mut s = sample_with(|c| {
+        c.sync_command = vec![script.display().to_string(), "sync".to_string()];
+    });
+    let server = common::FakeServer::new("201 Created");
+    s.app.config.caldav = Some(husk::config::Caldav {
+        url: server.url.clone(),
+        username: "jacob".to_string(),
+        password_command: vec!["echo".to_string(), "pw".to_string()],
+    });
+    s.app.handle_key(key('P'));
+    type_text(&mut s.app, "Chores");
+    s.app.handle_key(code(KeyCode::Enter));
+    s.app.handle_key(key('s'));
+    let start = Instant::now();
+    while s.app.sync_state().runs < 2 && start.elapsed() < Duration::from_secs(8) {
+        thread::sleep(Duration::from_millis(50));
+    }
+    let calls = fs::read_to_string(&log_file).unwrap();
+    let lines: Vec<&str> = calls.lines().collect();
+    assert_eq!(
+        lines.first().copied(),
+        Some("discover"),
+        "the startup sync and the list creation merge into one discover run: {calls}"
+    );
+    assert_eq!(lines.get(1).copied(), Some("metasync"), "{calls}");
+    assert_eq!(lines.get(2).copied(), Some("sync"), "{calls}");
+}

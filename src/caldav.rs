@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ureq::http::Request;
+use ureq::tls::{RootCerts, TlsConfig};
 
 use crate::config::Caldav;
 
@@ -22,7 +23,7 @@ pub fn create_list(caldav: &Caldav, id: &str, name: &str, color: Option<&str>) -
     let url = format!(
         "{}/{}/{}/",
         caldav.url.trim_end_matches('/'),
-        caldav.username,
+        percent_encode(&caldav.username),
         id
     );
     let auth = format!(
@@ -33,6 +34,13 @@ pub fn create_list(caldav: &Caldav, id: &str, name: &str, color: Option<&str>) -
         ureq::Agent::config_builder()
             .http_status_as_error(false)
             .allow_non_standard_methods(true)
+            // The system trust store, so a private CA installed for a
+            // self-hosted server works like it does for vdirsyncer.
+            .tls_config(
+                TlsConfig::builder()
+                    .root_certs(RootCerts::PlatformVerifier)
+                    .build(),
+            )
             .timeout_global(Some(Duration::from_secs(30)))
             .build(),
     );
@@ -49,9 +57,19 @@ pub fn create_list(caldav: &Caldav, id: &str, name: &str, color: Option<&str>) -
         401 | 403 => bail!("the server refused the credentials for {}", caldav.username),
         405 => bail!("a list with id {id} already exists on the server"),
         status => {
+            let reason = response
+                .status()
+                .canonical_reason()
+                .unwrap_or("")
+                .to_string();
+            // Radicale's error bodies are XML; only a plain-text line helps.
             let text = response.into_body().read_to_string().unwrap_or_default();
-            let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-            bail!("MKCOL {url} answered {status} {}", line.trim());
+            let line = text
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty() && !l.starts_with('<'))
+                .unwrap_or("");
+            bail!("MKCOL {url} answered {status} {reason} {line}");
         }
     }
 }
@@ -76,6 +94,20 @@ fn mkcol_body(name: &str, color: Option<&str>) -> String {
         escape(name),
         color
     )
+}
+
+/// A URL path segment: unreserved characters pass, the rest is encoded.
+fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 fn escape(text: &str) -> String {
@@ -131,6 +163,12 @@ mod tests {
         assert_eq!(base64(b"fo"), "Zm8=");
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(b"jacob:s3cret"), "amFjb2I6czNjcmV0");
+    }
+
+    #[test]
+    fn usernames_are_safe_in_the_path() {
+        assert_eq!(percent_encode("jacob"), "jacob");
+        assert_eq!(percent_encode("j c@x.org#1"), "j%20c%40x.org%231");
     }
 
     #[test]

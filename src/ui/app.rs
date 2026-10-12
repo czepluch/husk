@@ -692,6 +692,8 @@ impl App {
             self.reset_cursor();
         }
         self.syncer.request_discover();
+        // Back to the list, never into a detail of the empty new project.
+        self.return_to = Mode::Normal;
         Ok(format!("Created {}", project.name))
     }
 
