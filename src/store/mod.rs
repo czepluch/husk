@@ -25,6 +25,9 @@ pub trait Store {
     /// whatever the file held, so phone clients accept the older content.
     fn restore(&self, task: &Task) -> Result<Task>;
     fn move_to(&self, uid: &str, project: &ProjectId) -> Result<()>;
+    /// A new, empty project under a caller-chosen id, so the local side can
+    /// match a collection created on the server under the same id.
+    fn create_project(&self, id: &ProjectId, name: &str, color: Option<&str>) -> Result<Project>;
     /// A value that changes whenever the stored data may have changed,
     /// cheap enough to poll every few hundred milliseconds.
     fn stamp(&self) -> Result<u64>;

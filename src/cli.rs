@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::agenda::{Bucket, View, bucket, due_label, in_view, nest, sort_key};
 use crate::alarms;
+use crate::caldav;
 use crate::config::Config;
 use crate::model::{Due, NewTask, Priority, Project, ProjectId, Task, find_project, project_name};
 use crate::quickadd;
@@ -86,6 +87,40 @@ pub fn text(rows: &[Row]) -> String {
 
 pub fn json(rows: &[Row]) -> Result<String> {
     Ok(serde_json::to_string_pretty(rows)?)
+}
+
+/// Creates a list on the server, then its vdir directory under the same
+/// id, so the next discover pairs them and metasync has nothing to argue
+/// about. Needs `[caldav]` in the config.
+pub fn add_project(
+    store: &dyn Store,
+    config: &Config,
+    name: &str,
+    color: Option<&str>,
+) -> Result<Project> {
+    let name = name.trim();
+    if name.is_empty() {
+        anyhow::bail!("a list needs a name");
+    }
+    let caldav = config.caldav.as_ref().context(
+        "creating a list needs [caldav] url, username and password_command in the config",
+    )?;
+    if let Some(color) = color
+        && !is_color(color)
+    {
+        anyhow::bail!("color must be #RRGGBB, not {color:?}");
+    }
+    if find_project(&store.projects()?, name).is_some() {
+        anyhow::bail!("a list named {name:?} already exists");
+    }
+    // Upper case like the ids Apple Reminders makes.
+    let id = ProjectId::new(uuid::Uuid::new_v4().to_string().to_uppercase());
+    caldav::create_list(caldav, id.as_str(), name, color)?;
+    store.create_project(&id, name, color)
+}
+
+fn is_color(text: &str) -> bool {
+    text.len() == 7 && text.starts_with('#') && text[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Creates a task from quick-add text. The project comes from `@project`,

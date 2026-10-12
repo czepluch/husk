@@ -4,6 +4,7 @@
 pub mod agenda;
 pub mod alarms;
 pub mod atomic;
+pub mod caldav;
 pub mod cli;
 pub mod config;
 pub mod ical;

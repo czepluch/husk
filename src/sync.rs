@@ -25,8 +25,16 @@ pub struct SyncState {
     pub last_error: Option<String>,
 }
 
+/// What a run does: the sync command alone, or vdirsyncer's discover and
+/// metasync first, for a list created from husk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Request {
+    Sync,
+    Discover,
+}
+
 pub struct Syncer {
-    tx: Sender<()>,
+    tx: Sender<Request>,
     state: Arc<Mutex<SyncState>>,
     /// A request has been made that no run has picked up yet.
     pending: Arc<AtomicBool>,
@@ -54,9 +62,19 @@ impl Syncer {
     }
 
     pub fn request(&self) {
+        self.send(Request::Sync);
+    }
+
+    /// A sync preceded by discover and metasync, after a list was created
+    /// on both sides, so neither verb has a question to ask.
+    pub fn request_discover(&self) {
+        self.send(Request::Discover);
+    }
+
+    fn send(&self, request: Request) {
         if self.enabled {
             self.pending.store(true, Ordering::SeqCst);
-            let _ = self.tx.send(());
+            let _ = self.tx.send(request);
         }
     }
 
@@ -83,16 +101,28 @@ impl Syncer {
     }
 }
 
-fn worker(rx: &Receiver<()>, command: &[String], state: &Mutex<SyncState>, pending: &AtomicBool) {
-    while rx.recv().is_ok() {
+fn worker(
+    rx: &Receiver<Request>,
+    command: &[String],
+    state: &Mutex<SyncState>,
+    pending: &AtomicBool,
+) {
+    while let Ok(mut request) = rx.recv() {
         thread::sleep(DEBOUNCE);
-        while rx.try_recv().is_ok() {}
+        while let Ok(later) = rx.try_recv() {
+            if later == Request::Discover {
+                request = later;
+            }
+        }
         let started = Instant::now();
         if let Ok(mut s) = state.lock() {
             s.running = true;
         }
         pending.store(false, Ordering::SeqCst);
-        let outcome = run(command);
+        let outcome = match request {
+            Request::Sync => run(command),
+            Request::Discover => run_discover_quiet(command),
+        };
         if let Ok(mut s) = state.lock() {
             s.running = false;
             s.runs += 1;
@@ -144,9 +174,24 @@ pub fn run_discover(command: &[String]) -> Result<(), String> {
     }
 }
 
+/// `discover`, `metasync`, then the sync command, with the output captured:
+/// for a list that already exists on both sides, where discover asks
+/// nothing. Fails rather than hangs if it does ask, since stdin is closed.
+pub fn run_discover_quiet(command: &[String]) -> Result<(), String> {
+    let (program, args) = command.split_first().ok_or("no sync command")?;
+    for verb in ["discover", "metasync"] {
+        run_quiet(program, &[verb.to_string()])?;
+    }
+    run_quiet(program, args)
+}
+
 /// Runs the sync command once, in the foreground.
 pub fn run(command: &[String]) -> Result<(), String> {
     let (program, args) = command.split_first().ok_or("no sync command")?;
+    run_quiet(program, args)
+}
+
+fn run_quiet(program: &str, args: &[String]) -> Result<(), String> {
     let output = Command::new(program)
         .args(args)
         .output()

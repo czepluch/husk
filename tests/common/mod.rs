@@ -106,3 +106,50 @@ pub fn vdir_task_counts() -> (usize, usize) {
     let life = all.len() - argot - 1;
     (life, argot)
 }
+
+/// A one-request HTTP server on localhost that answers with `status` and
+/// hands back the raw request, for the CalDAV MKCOL.
+pub struct FakeServer {
+    pub url: String,
+    handle: std::thread::JoinHandle<String>,
+}
+
+impl FakeServer {
+    pub fn new(status: &'static str) -> Self {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("http://{}/", listener.local_addr().expect("addr"));
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut buf).expect("read");
+                raw.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&raw);
+                let Some(end) = text.find("\r\n\r\n") else {
+                    continue;
+                };
+                let length: usize = text[..end]
+                    .lines()
+                    .filter_map(|l| l.split_once(':'))
+                    .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                    .and_then(|(_, v)| v.trim().parse().ok())
+                    .unwrap_or(0);
+                if raw.len() >= end + 4 + length || n == 0 {
+                    break;
+                }
+            }
+            let reply =
+                format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            stream.write_all(reply.as_bytes()).expect("write");
+            String::from_utf8_lossy(&raw).into_owned()
+        });
+        Self { url, handle }
+    }
+
+    /// The request as received, once the server has answered it.
+    pub fn request(self) -> String {
+        self.handle.join().expect("server thread")
+    }
+}

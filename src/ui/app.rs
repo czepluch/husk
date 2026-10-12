@@ -8,6 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::agenda::{Bucket, View, bucket, due_label, in_view, nest, sort_key};
 use crate::alarms;
+use crate::cli;
 use crate::config::Config;
 use crate::ical::{codec, tz, vtodo};
 use crate::model::{Alarm, Due, NewTask, Priority, Project, ProjectId, Task};
@@ -56,6 +57,7 @@ pub enum Mode {
 pub enum InputKind {
     Due,
     Tags,
+    Project,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -481,6 +483,9 @@ impl App {
                     self.notify("Sync is off: sync_command is empty".to_string());
                 }
             }
+            KeyCode::Char('P') => {
+                self.start_input(InputKind::Project, String::new(), String::new())
+            }
             KeyCode::Char('u') => self.undo(),
             KeyCode::Char('d') => self.toggle_done(),
             KeyCode::Char('x') => {
@@ -669,7 +674,25 @@ impl App {
                     Ok(())
                 })
             }
+            InputKind::Project => self.add_project(&input.buffer),
         }
+    }
+
+    /// Creates the list on the server and in the vdir, shows it, and lets
+    /// the next sync run discover so vdirsyncer pairs the two sides.
+    fn add_project(&mut self, name: &str) -> Result<String> {
+        let project = cli::add_project(self.store.as_ref(), &self.config, name, None)?;
+        self.reload();
+        if let Some(i) = self
+            .views()
+            .iter()
+            .position(|v| *v == View::Project(project.id.clone()))
+        {
+            self.view_index = i;
+            self.reset_cursor();
+        }
+        self.syncer.request_discover();
+        Ok(format!("Created {}", project.name))
     }
 
     /// Opens the form empty, or prefilled from a task.

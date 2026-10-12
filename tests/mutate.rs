@@ -1423,3 +1423,40 @@ fn due_text_with_leftover_words_is_refused_not_trimmed() {
             .contains("could not read a date")
     );
 }
+
+#[test]
+fn capital_p_creates_a_list_and_moves_to_it() {
+    let mut s = sample();
+    s.app.handle_key(key('P'));
+    assert_eq!(s.app.mode, Mode::Input);
+    type_text(&mut s.app, "Chores");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert!(
+        s.app.message.as_deref().unwrap().contains("[caldav]"),
+        "without the section the prompt explains what is missing: {:?}",
+        s.app.message
+    );
+    assert_eq!(s.app.mode, Mode::Input, "the prompt keeps its text");
+    s.app.handle_key(code(KeyCode::Esc));
+
+    let server = common::FakeServer::new("201 Created");
+    let mut s = sample_with(|c| {
+        c.caldav = Some(husk::config::Caldav {
+            url: server.url.clone(),
+            username: "jacob".to_string(),
+            password_command: vec!["echo".to_string(), "pw".to_string()],
+        });
+    });
+    s.app.handle_key(key('P'));
+    type_text(&mut s.app, "Chores");
+    s.app.handle_key(code(KeyCode::Enter));
+    assert_eq!(s.app.message.as_deref(), Some("Created Chores"));
+    assert_eq!(s.app.mode, Mode::Normal);
+    assert_eq!(s.app.view_name(&s.app.view()), "Chores");
+    assert!(
+        server
+            .request()
+            .contains("<D:displayname>Chores</D:displayname>")
+    );
+    assert!(s.app.projects.iter().any(|p| p.name == "Chores"));
+}

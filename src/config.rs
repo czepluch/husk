@@ -17,6 +17,18 @@ pub struct Config {
     pub default_alarm_leads: Vec<String>,
     /// A built-in theme flavor: `phosphor` or `ansi`.
     pub theme: String,
+    /// The server, for the one thing vdirsyncer cannot do: creating a list.
+    pub caldav: Option<Caldav>,
+}
+
+/// Mirrors the vdirsyncer storage: the server root, the user and a command
+/// whose first output line is the password.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Caldav {
+    pub url: String,
+    pub username: String,
+    pub password_command: Vec<String>,
 }
 
 impl Default for Config {
@@ -29,6 +41,7 @@ impl Default for Config {
             time_format: "%H:%M".to_string(),
             default_alarm_leads: vec!["0m".to_string()],
             theme: "phosphor".to_string(),
+            caldav: None,
         }
     }
 }
@@ -66,6 +79,11 @@ impl Config {
     pub fn parse(text: &str) -> Result<Self> {
         let mut config: Self = toml::from_str(text)?;
         config.vdir = expand_home(&config.vdir);
+        if let Some(caldav) = &mut config.caldav {
+            for arg in &mut caldav.password_command {
+                *arg = expand_home(Path::new(arg)).to_string_lossy().into_owned();
+            }
+        }
         Ok(config)
     }
 }

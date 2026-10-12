@@ -562,6 +562,7 @@ fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
             "  today | fri | +2d | 2026-09-03, optional HH:MM; empty clears",
         ),
         InputKind::Tags => ("tags", "  comma separated"),
+        InputKind::Project => ("new list", "  created on the server and synced"),
     };
     // The hint is a placeholder: shown while the line is empty, gone once
     // typing starts, so nothing shifts under the cursor.
@@ -743,8 +744,14 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
         ("u", "undo the last change"),
         ("e / t", "edit in a form / edit the due date"),
         ("p / T", "cycle priority / edit tags"),
-        ("m / n", "move to a project / edit notes in $EDITOR"),
-        ("o", "edit the raw .ics in $EDITOR (the UID must stay)"),
+        (
+            "m / P",
+            "move to a project / create a list (needs [caldav])",
+        ),
+        (
+            "n / o",
+            "edit the notes / the raw .ics in $EDITOR (keep the UID)",
+        ),
         ("/", "filter by text; Enter keeps it, Esc clears it"),
         ("arrows", "move the cursor in a prompt; Ctrl jumps a word"),
         ("c", "show or hide completed tasks"),

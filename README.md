@@ -69,6 +69,11 @@ date_format = "%Y-%m-%d"
 time_format = "%H:%M"
 default_alarm_leads = ["0m"]                # one alarm, at the due time
 theme = "phosphor"                      # phosphor, ansi, or a Base16 scheme file
+
+[caldav]                                # only for creating lists (P, husk project add)
+url = "https://dav.example.org/"        # the same server vdirsyncer talks to
+username = "me"
+password_command = ["cat", "~/.config/husk/password"]   # first output line
 ```
 
 Any command takes `--config <file>` to use another config.
@@ -90,6 +95,7 @@ priority and creation time; subtasks sit under their parent.
 | `u` | undo the last change (the bar says `(u undo)` when it applies) |
 | `e` `t` `p` `T` | edit in a form; edit the due date, cycle priority, edit tags |
 | `m` | move to another list |
+| `P` | create a list, on the server first, then locally and synced |
 | `n` `o` | edit the notes, or the raw `.ics`, in `$EDITOR` |
 | `/` | filter by text; `Enter` keeps it, `Esc` clears it |
 | `c` | show or hide completed tasks |
@@ -112,6 +118,7 @@ task's first alarm as its reminder time, so keep it to one.
 husk add "Call bank due:tomorrow 09:00 +money"   # waits for the sync
 husk list [--view overdue|today|upcoming|urgent|all] [--project X] [--json]
 husk notify [--nag] [--dry-run]                  # see Notifications
+husk project add "Chores" [--color "#FFCC00"]  # needs [caldav]; syncs afterwards
 husk sync [--discover]                           # --discover after a new list on a phone
 husk theme dump | check <file>
 ```

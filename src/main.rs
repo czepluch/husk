@@ -60,11 +60,28 @@ enum Command {
         #[command(subcommand)]
         action: ThemeAction,
     },
+    /// Manage lists
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
+    },
     /// Run the sync command now
     Sync {
         /// First discover new lists and their names (vdirsyncer discover, metasync)
         #[arg(long)]
         discover: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectAction {
+    /// Create a list on the server and locally, then sync
+    Add {
+        /// The list's name; words are joined with spaces
+        name: Vec<String>,
+        /// The list's color as #RRGGBB
+        #[arg(long)]
+        color: Option<String>,
     },
 }
 
@@ -182,6 +199,18 @@ fn main() -> Result<()> {
                 Ok(())
             }
         },
+        Command::Project {
+            action: ProjectAction::Add { name, color },
+        } => {
+            let project = cli::add_project(&store, &config, &name.join(" "), color.as_deref())?;
+            println!("Created: {} [{}]", project.name, project.id.as_str());
+            if !config.sync_command.is_empty()
+                && let Err(error) = sync::run_discover_quiet(&config.sync_command)
+            {
+                bail!("list created, but the sync failed: {error}");
+            }
+            Ok(())
+        }
         Command::Sync { discover } => {
             if config.sync_command.is_empty() {
                 bail!("sync_command is empty in the config");

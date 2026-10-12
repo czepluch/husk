@@ -246,6 +246,23 @@ impl Store for VdirStore {
         write_atomic(&target, &text)?;
         fs::remove_file(&path).with_context(|| format!("delete {}", path.display()))
     }
+
+    fn create_project(&self, id: &ProjectId, name: &str, color: Option<&str>) -> Result<Project> {
+        let dir = self.project_dir(id);
+        if dir.exists() {
+            bail!("project {} already exists", id.as_str());
+        }
+        fs::create_dir(&dir).with_context(|| format!("create {}", dir.display()))?;
+        write_atomic(&dir.join("displayname"), name)?;
+        if let Some(color) = color {
+            write_atomic(&dir.join("color"), color)?;
+        }
+        Ok(Project {
+            id: id.clone(),
+            name: name.to_string(),
+            color: color.map(str::to_string),
+        })
+    }
 }
 
 fn read_trimmed(path: &Path) -> Option<String> {

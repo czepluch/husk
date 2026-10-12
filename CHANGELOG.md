@@ -5,6 +5,12 @@ Keep a Changelog.
 
 ## Unreleased
 
+- Lists can be created from husk: `P` in the TUI and `husk project add`
+  make the collection on the server with its name and color first, then
+  the vdir directory, and sync. Needs a `[caldav]` section in the config
+  with `url`, `username` and `password_command`. The one HTTPS request
+  brings in `ureq`.
+
 - An `Urgent` view between Upcoming and All lists the high-priority tasks
   of every project, also as `husk list --view urgent`.
 

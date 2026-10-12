@@ -16,6 +16,33 @@ fn defaults_match_the_spec() {
     assert_eq!(config.time_format, "%H:%M");
     assert_eq!(config.default_alarm_leads, ["0m"]);
     assert_eq!(config.theme, "phosphor");
+    assert_eq!(config.caldav, None);
+}
+
+#[test]
+fn the_caldav_section_is_optional_and_strict() {
+    let config = Config::parse(
+        "[caldav]\nurl = \"https://dav.example/\"\nusername = \"me\"\npassword_command = [\"cat\", \"~/.config/pw\"]\n",
+    )
+    .unwrap();
+    let caldav = config.caldav.unwrap();
+    assert_eq!(caldav.url, "https://dav.example/");
+    assert_eq!(caldav.username, "me");
+    assert_eq!(caldav.password_command[0], "cat");
+    assert!(
+        !caldav.password_command[1].starts_with('~'),
+        "home is expanded in the password command"
+    );
+    assert!(
+        Config::parse("[caldav]\nurl = \"x\"\n").is_err(),
+        "all three keys are required"
+    );
+    assert!(
+        Config::parse(
+            "[caldav]\nurl = \"x\"\nusername = \"u\"\npassword_command = []\npassword = \"p\"\n"
+        )
+        .is_err()
+    );
 }
 
 #[test]
