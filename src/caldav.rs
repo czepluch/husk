@@ -19,7 +19,7 @@ use crate::config::Caldav;
 /// VTODOs, named `name`. The id doubles as the vdir directory name, so the
 /// caller picks it and creates the local side with the same one.
 pub fn create_list(caldav: &Caldav, id: &str, name: &str, color: Option<&str>) -> Result<()> {
-    let (url, response) = send(caldav, "MKCOL", id, mkcol_body(name, color))?;
+    let (url, response) = send(caldav, "MKCOL", Some(id), Some(mkcol_body(name, color)))?;
     match response.status().as_u16() {
         201 => Ok(()),
         401 | 403 => bail!("the server refused the credentials for {}", caldav.username),
@@ -30,29 +30,49 @@ pub fn create_list(caldav: &Caldav, id: &str, name: &str, color: Option<&str>) -
 
 /// Deletes the collection and every task in it. A collection that is
 /// already gone counts as deleted, so a list removed on a phone can still
-/// be removed locally through the same path.
+/// be removed locally through the same path, but only once the user's
+/// home set answers: a wrong url or username yields a 404 for every list,
+/// and the local tasks would otherwise go while the server keeps them.
 pub fn delete_list(caldav: &Caldav, id: &str) -> Result<()> {
-    let (url, response) = send(caldav, "DELETE", id, String::new())?;
+    let (url, response) = send(caldav, "DELETE", Some(id), None)?;
     match response.status().as_u16() {
-        200 | 204 | 404 => Ok(()),
-        401 | 403 => bail!("the server refused the credentials for {}", caldav.username),
+        200 | 204 => Ok(()),
+        404 => {
+            let (home, response) = send(caldav, "PROPFIND", None, None)?;
+            if response.status().is_success() {
+                Ok(())
+            } else {
+                bail!(
+                    "the server has no list {id} under {home} and that path answers {} itself: check url and username under [caldav]",
+                    response.status().as_u16()
+                )
+            }
+        }
+        401 => bail!("the server refused the credentials for {}", caldav.username),
+        // Radicale answers 403 with good credentials when the user lacks
+        // the delete right or permit_delete_collection is off.
+        403 => bail!(
+            "the server does not allow {} to delete lists (Radicale: permit_delete_collection, or the D right)",
+            caldav.username
+        ),
         _ => Err(unexpected("DELETE", &url, response)),
     }
 }
 
-/// One authenticated request to `<url>/<username>/<id>/`.
+/// One authenticated request to `<url>/<username>/<id>/`, or to the home
+/// set `<url>/<username>/` without an id.
 fn send(
     caldav: &Caldav,
     method: &str,
-    id: &str,
-    body: String,
+    id: Option<&str>,
+    body: Option<String>,
 ) -> Result<(String, Response<ureq::Body>)> {
     let password = password(&caldav.password_command)?;
     let url = format!(
-        "{}/{}/{}/",
+        "{}/{}/{}",
         caldav.url.trim_end_matches('/'),
         percent_encode(&caldav.username),
-        id
+        id.map(|id| format!("{id}/")).unwrap_or_default()
     );
     let auth = format!(
         "Basic {}",
@@ -72,12 +92,15 @@ fn send(
             .timeout_global(Some(Duration::from_secs(30)))
             .build(),
     );
-    let request = Request::builder()
+    let mut request = Request::builder()
         .method(method)
         .uri(&url)
-        .header("Authorization", auth)
-        .header("Content-Type", "application/xml; charset=utf-8")
-        .body(body)
+        .header("Authorization", auth);
+    if body.is_some() {
+        request = request.header("Content-Type", "application/xml; charset=utf-8");
+    }
+    let request = request
+        .body(body.unwrap_or_default())
         .with_context(|| format!("build the {method} request"))?;
     let response = agent
         .run(request)

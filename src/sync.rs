@@ -191,6 +191,8 @@ pub fn run(command: &[String]) -> Result<(), String> {
     run_quiet(program, args)
 }
 
+const DISCOVER_PROMPT: &str = "Should vdirsyncer attempt to create it?";
+
 fn run_quiet(program: &str, args: &[String]) -> Result<(), String> {
     let output = Command::new(program)
         .args(args)
@@ -216,5 +218,3 @@ fn run_quiet(program: &str, args: &[String]) -> Result<(), String> {
         .to_string();
     Err(format!("{program} failed: {reason}"))
 }
-
-const DISCOVER_PROMPT: &str = "Should vdirsyncer attempt to create it?";

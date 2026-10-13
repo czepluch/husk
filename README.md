@@ -70,7 +70,9 @@ metadata = ["displayname", "color"]
 
 With `"from a"` in `collections`, vdirsyncer asks before creating a list that
 exists on one side only, and husk's background sync cannot answer; the bar
-then says to run `husk sync --discover` in a terminal.
+then says to run `husk sync --discover` in a terminal. Mind that a directory
+only the vdir has (a list deleted on a phone, say) stays visible in husk but
+is not synced until `husk project remove` cleans it up.
 
 ## Configuration
 

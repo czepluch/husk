@@ -126,51 +126,108 @@ pub enum Leftover {
     Keep,
     /// Move them to the named list first.
     MoveTo(String),
+    /// Delete them with the list.
     Delete,
 }
 
-/// Deletes a list on the server (a list already gone there counts), then
-/// its vdir directory. Tasks in it are moved or deleted first as `leftover`
-/// says; by default a list with tasks is refused.
+/// The one list a user typed: its directory name wins, else its display
+/// name, which two lists can share (a duplicate made on a phone is the
+/// usual reason to remove one), so that case is refused with the ids.
+pub fn project_named(store: &dyn Store, name: &str) -> Result<ProjectId> {
+    let projects = store.projects()?;
+    let wanted = name.trim().to_lowercase();
+    if let Some(project) = projects
+        .iter()
+        .find(|p| p.id.as_str().to_lowercase() == wanted)
+    {
+        return Ok(project.id.clone());
+    }
+    let mut matches = projects.iter().filter(|p| p.name.to_lowercase() == wanted);
+    match (matches.next(), matches.next()) {
+        (Some(project), None) => Ok(project.id.clone()),
+        (Some(first), Some(second)) => {
+            let ids: Vec<&str> = [first, second]
+                .into_iter()
+                .chain(matches)
+                .map(|p| p.id.as_str())
+                .collect();
+            anyhow::bail!(
+                "{} lists are named {name:?}: name one by its id instead, {}",
+                ids.len(),
+                ids.join(" or ")
+            )
+        }
+        (None, _) => anyhow::bail!("no list named {name:?}"),
+    }
+}
+
+/// Removes a list: the collection on the server (one already gone there
+/// counts), then the vdir directory. What happens to its tasks is up to
+/// `leftover`; by default a list with tasks is refused. Everything that can
+/// refuse runs before the server request, so a refusal changes nothing.
 pub fn remove_project(
     store: &dyn Store,
     config: &Config,
-    name: &str,
+    id: &ProjectId,
     leftover: &Leftover,
 ) -> Result<Project> {
     let projects = store.projects()?;
-    let project = find_project(&projects, name.trim())
-        .with_context(|| format!("no list named {name:?}"))?
+    let project = projects
+        .iter()
+        .find(|p| p.id == *id)
+        .with_context(|| format!("no list with id {}", id.as_str()))?
         .clone();
     let caldav = config.caldav.as_ref().context(
         "removing a list needs [caldav] url, username and password_command in the config",
     )?;
-    let tasks = store.tasks(Some(&project.id))?;
-    let target = match leftover {
-        Leftover::Keep if !tasks.is_empty() => anyhow::bail!(
-            "{} holds {} tasks: move them with --move-to <list> or drop them with --delete-tasks",
-            project.name,
-            tasks.len()
-        ),
+    let tasks = store.tasks(Some(id))?;
+    let unreadable = store.unreadable(id)?;
+    match leftover {
+        Leftover::Keep => {
+            let items = tasks.len() + unreadable.len();
+            if items > 0 {
+                anyhow::bail!(
+                    "{} holds {items} tasks: move them with --move-to <list> or drop them with --delete-tasks",
+                    project.name
+                );
+            }
+            caldav::delete_list(caldav, id.as_str())?;
+            store.delete_project(id, false)
+        }
         Leftover::MoveTo(target) => {
             let target = find_project(&projects, target)
                 .with_context(|| format!("no list named {target:?}"))?;
             if target.id == project.id {
                 anyhow::bail!("cannot move the tasks of {} into itself", project.name);
             }
-            Some(target.id.clone())
+            if !unreadable.is_empty() {
+                anyhow::bail!(
+                    "{} holds {} files husk cannot read and so cannot move ({}): --delete-tasks drops them with the list",
+                    project.name,
+                    unreadable.len(),
+                    unreadable.join(", ")
+                );
+            }
+            // The moves come first: a move the store refuses leaves the
+            // list intact, and the next sync carries moved tasks over.
+            for (n, task) in tasks.iter().enumerate() {
+                store.move_to(&task.uid, &target.id).with_context(|| {
+                    format!(
+                        "moved {n} of {} tasks to {}; the list stays",
+                        tasks.len(),
+                        target.name
+                    )
+                })?;
+            }
+            caldav::delete_list(caldav, id.as_str())
+                .with_context(|| format!("the tasks are in {} now; the list stays", target.name))?;
+            store.delete_project(id, false)
         }
-        Leftover::Keep | Leftover::Delete => None,
-    };
-    // The server goes first, so a refused request changes nothing locally.
-    caldav::delete_list(caldav, project.id.as_str())?;
-    for task in &tasks {
-        match &target {
-            Some(target) => store.move_to(&task.uid, target)?,
-            None => store.delete(&task.uid)?,
+        Leftover::Delete => {
+            caldav::delete_list(caldav, id.as_str())?;
+            store.delete_project(id, true)
         }
-    }
-    store.delete_project(&project.id)?;
+    }?;
     Ok(project)
 }
 

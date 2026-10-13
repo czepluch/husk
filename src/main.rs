@@ -230,7 +230,8 @@ fn main() -> Result<()> {
                 None if delete_tasks => cli::Leftover::Delete,
                 None => cli::Leftover::Keep,
             };
-            let project = cli::remove_project(&store, &config, &name.join(" "), &leftover)?;
+            let id = cli::project_named(&store, &name.join(" "))?;
+            let project = cli::remove_project(&store, &config, &id, &leftover)?;
             println!("Removed: {} [{}]", project.name, project.id.as_str());
             sync_after("list removed", &config)
         }

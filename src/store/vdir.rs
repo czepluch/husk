@@ -264,14 +264,28 @@ impl Store for VdirStore {
         })
     }
 
-    fn delete_project(&self, id: &ProjectId) -> Result<()> {
+    fn unreadable(&self, project: &ProjectId) -> Result<Vec<String>> {
+        Ok(self
+            .ics_files(project)?
+            .into_iter()
+            .filter(|path| self.read_task(project, path).is_err())
+            .map(|path| {
+                path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect())
+    }
+
+    fn delete_project(&self, id: &ProjectId, with_tasks: bool) -> Result<()> {
         let dir = self.project_dir(id);
         if !dir.is_dir() {
             bail!("unknown project {}", id.as_str());
         }
-        let tasks = self.ics_files(id)?.len();
-        if tasks > 0 {
-            bail!("project {} still holds {tasks} tasks", id.as_str());
+        let items = self.ics_files(id)?.len();
+        if items > 0 && !with_tasks {
+            bail!("project {} still holds {items} items", id.as_str());
         }
         fs::remove_dir_all(&dir).with_context(|| format!("remove {}", dir.display()))
     }

@@ -748,13 +748,8 @@ impl App {
     }
 
     fn remove_project(&mut self, id: &ProjectId) -> Result<String> {
-        let name = self.project_name(id);
-        let project = cli::remove_project(
-            self.store.as_ref(),
-            &self.config,
-            &name,
-            &cli::Leftover::Keep,
-        )?;
+        let project =
+            cli::remove_project(self.store.as_ref(), &self.config, id, &cli::Leftover::Keep)?;
         self.reload();
         self.clamp();
         self.syncer.request_discover();
