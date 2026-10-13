@@ -85,6 +85,22 @@ fn failures_are_reported_and_an_empty_command_is_a_no_op() {
 }
 
 #[test]
+fn vdirsyncers_question_about_a_one_sided_list_points_at_discover() {
+    let error = husk::sync::run(&[
+        "sh".to_string(),
+        "-c".to_string(),
+        "echo 'warning: No collection \"X\" found for storage local.' >&2; \
+         printf 'Should vdirsyncer attempt to create it? [y/N]: ' >&2; echo Aborted! >&2; exit 1"
+            .to_string(),
+    ])
+    .unwrap_err();
+    assert!(
+        error.contains("husk sync --discover in a terminal"),
+        "{error}"
+    );
+}
+
+#[test]
 fn flush_waits_for_a_pending_run_and_runs_are_two_seconds_apart() {
     let dir = common::TempDir::new();
     let marker = dir.path().join("runs");

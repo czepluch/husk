@@ -200,6 +200,13 @@ fn run_quiet(program: &str, args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // vdirsyncer's discover asks before creating a collection that exists
+    // on one side only; with stdin closed the question aborts the run.
+    if stderr.contains(DISCOVER_PROMPT) {
+        return Err(format!(
+            "{program} asked about a list that exists on one side only: run husk sync --discover in a terminal"
+        ));
+    }
     let reason = stderr
         .lines()
         .rev()
@@ -209,3 +216,5 @@ fn run_quiet(program: &str, args: &[String]) -> Result<(), String> {
         .to_string();
     Err(format!("{program} failed: {reason}"))
 }
+
+const DISCOVER_PROMPT: &str = "Should vdirsyncer attempt to create it?";
