@@ -11,6 +11,18 @@ Keep a Changelog.
   with `url`, `username` and `password_command`. The one HTTPS request
   brings in `ureq`.
 
+- Lists can be removed too: `X` on an empty list in the TUI, after
+  confirming, and `husk project remove <name>`, which refuses a list with
+  tasks unless `--move-to <list>` or `--delete-tasks` says what happens to
+  them. The server collection is deleted first (one already gone counts),
+  then the directory, then discover and sync run.
+
+- The recommended vdirsyncer pair now has `collections = ["from b"]` and
+  `implicit = "create"`, so lists made on a phone appear without the
+  question vdirsyncer's discover otherwise asks, which the background sync
+  cannot answer. When that question does come up, the bar says to run
+  `husk sync --discover` in a terminal instead of showing `Aborted!`.
+
 - An `Urgent` view between Upcoming and All lists the high-priority tasks
   of every project, also as `husk list --view urgent`.
 

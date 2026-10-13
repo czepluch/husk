@@ -119,6 +119,61 @@ pub fn add_project(
     store.create_project(&id, name, color)
 }
 
+/// What `remove_project` does with the tasks of a list that holds some.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Leftover {
+    /// Refuse to remove the list.
+    Keep,
+    /// Move them to the named list first.
+    MoveTo(String),
+    Delete,
+}
+
+/// Deletes a list on the server (a list already gone there counts), then
+/// its vdir directory. Tasks in it are moved or deleted first as `leftover`
+/// says; by default a list with tasks is refused.
+pub fn remove_project(
+    store: &dyn Store,
+    config: &Config,
+    name: &str,
+    leftover: &Leftover,
+) -> Result<Project> {
+    let projects = store.projects()?;
+    let project = find_project(&projects, name.trim())
+        .with_context(|| format!("no list named {name:?}"))?
+        .clone();
+    let caldav = config.caldav.as_ref().context(
+        "removing a list needs [caldav] url, username and password_command in the config",
+    )?;
+    let tasks = store.tasks(Some(&project.id))?;
+    let target = match leftover {
+        Leftover::Keep if !tasks.is_empty() => anyhow::bail!(
+            "{} holds {} tasks: move them with --move-to <list> or drop them with --delete-tasks",
+            project.name,
+            tasks.len()
+        ),
+        Leftover::MoveTo(target) => {
+            let target = find_project(&projects, target)
+                .with_context(|| format!("no list named {target:?}"))?;
+            if target.id == project.id {
+                anyhow::bail!("cannot move the tasks of {} into itself", project.name);
+            }
+            Some(target.id.clone())
+        }
+        Leftover::Keep | Leftover::Delete => None,
+    };
+    // The server goes first, so a refused request changes nothing locally.
+    caldav::delete_list(caldav, project.id.as_str())?;
+    for task in &tasks {
+        match &target {
+            Some(target) => store.move_to(&task.uid, target)?,
+            None => store.delete(&task.uid)?,
+        }
+    }
+    store.delete_project(&project.id)?;
+    Ok(project)
+}
+
 fn is_color(text: &str) -> bool {
     text.len() == 7 && text.starts_with('#') && text[1..].chars().all(|c| c.is_ascii_hexdigit())
 }

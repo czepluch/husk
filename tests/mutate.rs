@@ -1462,6 +1462,64 @@ fn capital_p_creates_a_list_and_moves_to_it() {
 }
 
 #[test]
+fn capital_x_removes_an_empty_list_after_confirming() {
+    let mut s = sample();
+    s.app.handle_key(key('X'));
+    assert_eq!(s.app.mode, Mode::Normal);
+    assert!(
+        s.app.message.as_deref().unwrap().contains("left pane"),
+        "a smart view is not a list: {:?}",
+        s.app.message
+    );
+
+    s.app.view_index = 6;
+    assert_eq!(s.app.view_name(&s.app.view()), "Life");
+    s.app.handle_key(key('X'));
+    assert_eq!(s.app.mode, Mode::Normal, "a list with tasks is not removed");
+    let message = s.app.message.clone().unwrap();
+    assert!(
+        message.contains("husk project remove \"Life\" --move-to"),
+        "{message}"
+    );
+
+    s.app.view_index = 7;
+    assert_eq!(s.app.view_name(&s.app.view()), "solidity");
+    s.app.handle_key(key('X'));
+    assert_eq!(s.app.mode, Mode::Confirm);
+    assert!(render(&s.app).contains("Remove the list \"solidity\"?"));
+    s.app.handle_key(key('n'));
+    assert_eq!(s.app.mode, Mode::Normal);
+    assert!(s.dir.path().join("solidity").is_dir());
+
+    s.app.handle_key(key('X'));
+    s.app.handle_key(key('y'));
+    assert!(
+        s.app.message.as_deref().unwrap().contains("[caldav]"),
+        "without the section nothing is removed: {:?}",
+        s.app.message
+    );
+    assert!(s.dir.path().join("solidity").is_dir());
+
+    let server = common::FakeServer::new("204 No Content");
+    s.app.config.caldav = Some(husk::config::Caldav {
+        url: server.url.clone(),
+        username: "jacob".to_string(),
+        password_command: vec!["echo".to_string(), "pw".to_string()],
+    });
+    s.app.handle_key(key('X'));
+    s.app.handle_key(key('y'));
+    assert_eq!(s.app.message.as_deref(), Some("Removed solidity"));
+    assert!(server.request().starts_with("DELETE /jacob/solidity/"));
+    assert!(!s.dir.path().join("solidity").exists());
+    assert_eq!(s.app.views().len(), 7, "the view is gone from the pane");
+    assert_eq!(
+        s.app.view_name(&s.app.view()),
+        "Life",
+        "the cursor stays inside the pane"
+    );
+}
+
+#[test]
 fn a_discover_request_survives_later_sync_requests_in_the_same_run() {
     let log = common::TempDir::new();
     let log_file = log.path().join("calls");

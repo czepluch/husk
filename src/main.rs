@@ -83,6 +83,17 @@ enum ProjectAction {
         #[arg(long)]
         color: Option<String>,
     },
+    /// Delete a list on the server and locally, then sync
+    Remove {
+        /// The list's name; words are joined with spaces
+        name: Vec<String>,
+        /// Move its tasks to this list first
+        #[arg(long, value_name = "LIST", conflicts_with = "delete_tasks")]
+        move_to: Option<String>,
+        /// Delete its tasks along with it
+        #[arg(long)]
+        delete_tasks: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -204,12 +215,24 @@ fn main() -> Result<()> {
         } => {
             let project = cli::add_project(&store, &config, &name.join(" "), color.as_deref())?;
             println!("Created: {} [{}]", project.name, project.id.as_str());
-            if !config.sync_command.is_empty()
-                && let Err(error) = sync::run_discover_quiet(&config.sync_command)
-            {
-                bail!("list created, but the sync failed: {error}");
-            }
-            Ok(())
+            sync_after("list created", &config)
+        }
+        Command::Project {
+            action:
+                ProjectAction::Remove {
+                    name,
+                    move_to,
+                    delete_tasks,
+                },
+        } => {
+            let leftover = match move_to {
+                Some(target) => cli::Leftover::MoveTo(target),
+                None if delete_tasks => cli::Leftover::Delete,
+                None => cli::Leftover::Keep,
+            };
+            let project = cli::remove_project(&store, &config, &name.join(" "), &leftover)?;
+            println!("Removed: {} [{}]", project.name, project.id.as_str());
+            sync_after("list removed", &config)
         }
         Command::Sync { discover } => {
             if config.sync_command.is_empty() {
@@ -223,4 +246,14 @@ fn main() -> Result<()> {
             outcome.map_err(|e| anyhow::anyhow!(e))
         }
     }
+}
+
+/// Discover, metasync and sync after a list changed, in the foreground.
+fn sync_after(done: &str, config: &Config) -> Result<()> {
+    if !config.sync_command.is_empty()
+        && let Err(error) = sync::run_discover_quiet(&config.sync_command)
+    {
+        bail!("{done}, but the sync failed: {error}");
+    }
+    Ok(())
 }

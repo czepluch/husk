@@ -45,12 +45,35 @@ pub enum Mode {
     Help,
     /// A one-line text prompt; which one is in `App::input`.
     Input,
-    /// Waiting for y/n on a delete.
+    /// Waiting for y/n on a delete; what is deleted is in `App::confirm`.
     Confirm,
     /// Choosing a project to move the task to.
     Pick,
     /// The add or edit form.
     Form,
+}
+
+/// What a y/n in `Mode::Confirm` deletes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Confirm {
+    Task {
+        uid: String,
+        summary: String,
+    },
+    /// An empty list, on the server and locally.
+    List {
+        id: ProjectId,
+        name: String,
+    },
+}
+
+impl Confirm {
+    pub fn question(&self) -> String {
+        match self {
+            Confirm::Task { summary, .. } => format!("Delete \"{summary}\"?"),
+            Confirm::List { name, .. } => format!("Remove the list \"{name}\"?"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,8 +216,8 @@ pub struct App {
     pub input: Option<Input>,
     /// The add or edit form while one is open.
     pub form: Option<Form>,
-    /// UID and summary of the task a delete is waiting on.
-    pub confirm: Option<(String, String)>,
+    /// What the open y/n question deletes.
+    pub confirm: Option<Confirm>,
     /// Cursor in the project picker, and the task it will move.
     pub pick_index: usize,
     pick_uid: Option<String>,
@@ -490,11 +513,15 @@ impl App {
             KeyCode::Char('d') => self.toggle_done(),
             KeyCode::Char('x') => {
                 if let Some(task) = self.selected_task() {
-                    self.confirm = Some((task.uid.clone(), task.summary.clone()));
+                    self.confirm = Some(Confirm::Task {
+                        uid: task.uid.clone(),
+                        summary: task.summary.clone(),
+                    });
                     self.return_to = self.mode;
                     self.mode = Mode::Confirm;
                 }
             }
+            KeyCode::Char('X') => self.ask_remove_project(),
             KeyCode::Char('e') => {
                 let uid = self.selected_task().map(|t| t.uid.clone());
                 if let Some(uid) = uid {
@@ -607,10 +634,12 @@ impl App {
     fn confirm_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
-                if let Some((uid, _)) = self.confirm.take() {
-                    let result = self.delete(&uid);
-                    self.report(result);
-                }
+                let result = match self.confirm.take() {
+                    Some(Confirm::Task { uid, .. }) => self.delete(&uid),
+                    Some(Confirm::List { id, .. }) => self.remove_project(&id),
+                    None => Ok(String::new()),
+                };
+                self.report(result);
                 // The deleted task's detail would show its neighbour.
                 self.mode = Mode::Normal;
             }
@@ -695,6 +724,41 @@ impl App {
         // Back to the list, never into a detail of the empty new project.
         self.return_to = Mode::Normal;
         Ok(format!("Created {}", project.name))
+    }
+
+    /// `X` in a project view: asks before removing an empty list, and
+    /// points at the CLI for one that holds tasks, where the choice of what
+    /// to do with them is explicit.
+    fn ask_remove_project(&mut self) {
+        let View::Project(id) = self.view() else {
+            self.notify("Pick a list in the left pane to remove it".to_string());
+            return;
+        };
+        let name = self.project_name(&id);
+        let tasks = self.tasks.iter().filter(|t| t.project == id).count();
+        if tasks > 0 {
+            self.notify(format!(
+                "{name} holds {tasks} tasks: husk project remove {name:?} --move-to <list> or --delete-tasks"
+            ));
+            return;
+        }
+        self.confirm = Some(Confirm::List { id, name });
+        self.return_to = self.mode;
+        self.mode = Mode::Confirm;
+    }
+
+    fn remove_project(&mut self, id: &ProjectId) -> Result<String> {
+        let name = self.project_name(id);
+        let project = cli::remove_project(
+            self.store.as_ref(),
+            &self.config,
+            &name,
+            &cli::Leftover::Keep,
+        )?;
+        self.reload();
+        self.clamp();
+        self.syncer.request_discover();
+        Ok(format!("Removed {}", project.name))
     }
 
     /// Opens the form empty, or prefilled from a task.

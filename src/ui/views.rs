@@ -8,7 +8,9 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::app::{App, FORM_FIELDS, FormField, InputKind, Mode, Pane, SMART_VIEWS, byte_of};
+use super::app::{
+    App, Confirm, FORM_FIELDS, FormField, InputKind, Mode, Pane, SMART_VIEWS, byte_of,
+};
 use crate::agenda::{Bucket, View, alarm_text, bucket, due_detail, due_label, stamp};
 use crate::model::{Priority, Status, Task};
 use crate::recur;
@@ -465,10 +467,11 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         Mode::Confirm => Line::from(vec![
             Span::styled(
                 format!(
-                    " Delete \"{}\"? ",
+                    " {} ",
                     app.confirm
                         .as_ref()
-                        .map_or("", |(_, summary)| summary.as_str())
+                        .map(Confirm::question)
+                        .unwrap_or_default()
                 ),
                 theme.base,
             ),
@@ -740,7 +743,10 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
             "d",
             "done / reopen; a recurring task moves to its next occurrence",
         ),
-        ("x", "delete, after confirming"),
+        (
+            "x / X",
+            "delete the task / remove an empty list, after confirming",
+        ),
         ("u", "undo the last change"),
         ("e / t", "edit in a form / edit the due date"),
         ("p / T", "cycle priority / edit tags"),

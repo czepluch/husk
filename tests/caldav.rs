@@ -2,8 +2,9 @@ mod common;
 
 use std::fs;
 
-use husk::cli;
+use husk::cli::{self, Leftover};
 use husk::config::{Caldav, Config};
+use husk::model::{NewTask, ProjectId};
 use husk::store::{Store, VdirStore};
 
 fn config(dir: &common::TempDir, url: &str) -> Config {
@@ -102,6 +103,139 @@ fn a_failing_password_command_stops_before_any_request() {
         name.len() == 36 && name.to_string_lossy().contains('-')
     }));
     drop(server);
+}
+
+#[test]
+fn an_empty_list_is_removed_on_the_server_then_locally() {
+    let dir = common::fixture_vdir();
+    let store = VdirStore::new(dir.path());
+    let server = common::FakeServer::new("204 No Content");
+    let config = config(&dir, &server.url);
+
+    let project = cli::remove_project(&store, &config, "solidity", &Leftover::Keep).unwrap();
+    let request = server.request();
+    assert!(
+        request.starts_with("DELETE /jacob/solidity/ HTTP/1.1"),
+        "{request}"
+    );
+    assert!(request.contains("authorization: Basic "), "{request}");
+    assert_eq!(project.id.as_str(), "solidity");
+    assert!(!dir.path().join("solidity").exists());
+    assert!(!store.projects().unwrap().iter().any(|p| p.id == project.id));
+}
+
+#[test]
+fn a_list_already_gone_from_the_server_is_still_removed_locally() {
+    let dir = common::fixture_vdir();
+    let store = VdirStore::new(dir.path());
+    let server = common::FakeServer::new("404 Not Found");
+    let config = config(&dir, &server.url);
+    cli::remove_project(&store, &config, "solidity", &Leftover::Keep).unwrap();
+    drop(server.request());
+    assert!(!dir.path().join("solidity").exists());
+}
+
+#[test]
+fn a_list_with_tasks_is_kept_unless_told_where_they_go() {
+    let dir = common::fixture_vdir();
+    let store = VdirStore::new(dir.path());
+    let config = config(&dir, "http://127.0.0.1:9/");
+    let (life, argot) = common::vdir_task_counts();
+
+    let error = cli::remove_project(&store, &config, "Life", &Leftover::Keep).unwrap_err();
+    let text = format!("{error:#}");
+    assert!(
+        text.contains(&format!("holds {life} tasks")) && text.contains("--move-to"),
+        "{text}"
+    );
+    let error = cli::remove_project(
+        &store,
+        &config,
+        "Life",
+        &Leftover::MoveTo("Nope".to_string()),
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("no list named \"Nope\""));
+    let error = cli::remove_project(
+        &store,
+        &config,
+        "Life",
+        &Leftover::MoveTo("life".to_string()),
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("into itself"));
+    let error = cli::remove_project(&store, &config, "Nope", &Leftover::Keep).unwrap_err();
+    assert!(format!("{error:#}").contains("no list named \"Nope\""));
+    assert!(dir.path().join("life").is_dir());
+    assert_eq!(store.tasks(None).unwrap().len(), life + argot);
+}
+
+#[test]
+fn tasks_move_to_another_list_before_removal() {
+    let dir = common::fixture_vdir();
+    let store = VdirStore::new(dir.path());
+    let server = common::FakeServer::new("204 No Content");
+    let config = config(&dir, &server.url);
+    let (life, argot) = common::vdir_task_counts();
+    let chores = ProjectId::new("chores");
+    store.create_project(&chores, "Chores", None).unwrap();
+    for summary in ["Vacuum", "Dishes"] {
+        store
+            .create(
+                &chores,
+                NewTask {
+                    summary: summary.to_string(),
+                    ..NewTask::default()
+                },
+            )
+            .unwrap();
+    }
+
+    cli::remove_project(
+        &store,
+        &config,
+        "Chores",
+        &Leftover::MoveTo("Life".to_string()),
+    )
+    .unwrap();
+    drop(server.request());
+    assert!(!dir.path().join("chores").exists());
+    let tasks = store.tasks(None).unwrap();
+    assert_eq!(tasks.len(), life + argot + 2);
+    let moved: Vec<&str> = tasks
+        .iter()
+        .filter(|t| t.summary == "Vacuum" || t.summary == "Dishes")
+        .map(|t| t.project.as_str())
+        .collect();
+    assert_eq!(moved, ["life", "life"]);
+}
+
+#[test]
+fn tasks_are_deleted_with_the_list_when_asked() {
+    let dir = common::fixture_vdir();
+    let store = VdirStore::new(dir.path());
+    let server = common::FakeServer::new("200 OK");
+    let config = config(&dir, &server.url);
+    let (life, _) = common::vdir_task_counts();
+
+    cli::remove_project(&store, &config, "Argot", &Leftover::Delete).unwrap();
+    drop(server.request());
+    assert!(!dir.path().join("argot").exists());
+    assert_eq!(store.tasks(None).unwrap().len(), life);
+}
+
+#[test]
+fn a_refused_removal_changes_nothing() {
+    let dir = common::fixture_vdir();
+    let store = VdirStore::new(dir.path());
+    let server = common::FakeServer::new("403 Forbidden");
+    let config = config(&dir, &server.url);
+    let (life, argot) = common::vdir_task_counts();
+
+    let error = cli::remove_project(&store, &config, "Argot", &Leftover::Delete).unwrap_err();
+    assert!(format!("{error:#}").contains("credentials"), "{error:#}");
+    assert!(dir.path().join("argot").is_dir());
+    assert_eq!(store.tasks(None).unwrap().len(), life + argot);
 }
 
 #[test]

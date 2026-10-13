@@ -263,6 +263,18 @@ impl Store for VdirStore {
             color: color.map(str::to_string),
         })
     }
+
+    fn delete_project(&self, id: &ProjectId) -> Result<()> {
+        let dir = self.project_dir(id);
+        if !dir.is_dir() {
+            bail!("unknown project {}", id.as_str());
+        }
+        let tasks = self.ics_files(id)?.len();
+        if tasks > 0 {
+            bail!("project {} still holds {tasks} tasks", id.as_str());
+        }
+        fs::remove_dir_all(&dir).with_context(|| format!("remove {}", dir.display()))
+    }
 }
 
 fn read_trimmed(path: &Path) -> Option<String> {

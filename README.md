@@ -57,6 +57,21 @@ built against; section 5 of the spec has a working config), Nextcloud,
 Baikal, Fastmail or iCloud. Apple Reminders and Tasks.org each need the
 server added as a CalDAV account on the phone.
 
+Let the server decide which lists exist, so a list made on a phone appears
+without a question and a list deleted there just stops syncing:
+
+```ini
+[pair tasks]
+collections = ["from b"]      # b is the server storage
+implicit = "create"
+conflict_resolution = "b wins"
+metadata = ["displayname", "color"]
+```
+
+With `"from a"` in `collections`, vdirsyncer asks before creating a list that
+exists on one side only, and husk's background sync cannot answer; the bar
+then says to run `husk sync --discover` in a terminal.
+
 ## Configuration
 
 `~/.config/husk/config.toml`, every key optional:
@@ -70,7 +85,7 @@ time_format = "%H:%M"
 default_alarm_leads = ["0m"]                # one alarm, at the due time
 theme = "phosphor"                      # phosphor, ansi, or a Base16 scheme file
 
-[caldav]                                # only for creating lists (P, husk project add)
+[caldav]                                # only for creating and removing lists
 url = "https://dav.example.org/"        # the same server vdirsyncer talks to
 username = "me"
 password_command = ["cat", "~/.config/husk/password"]   # first output line
@@ -95,7 +110,7 @@ priority and creation time; subtasks sit under their parent.
 | `u` | undo the last change (the bar says `(u undo)` when it applies) |
 | `e` `t` `p` `T` | edit in a form; edit the due date, cycle priority, edit tags |
 | `m` | move to another list |
-| `P` | create a list, on the server first, then locally and synced |
+| `P` `X` | create a list, on the server first, then locally and synced; remove the empty list shown, after `y/n` |
 | `n` `o` | edit the notes, or the raw `.ics`, in `$EDITOR` |
 | `/` | filter by text; `Enter` keeps it, `Esc` clears it |
 | `c` | show or hide completed tasks |
@@ -119,6 +134,7 @@ husk add "Call bank due:tomorrow 09:00 +money"   # waits for the sync
 husk list [--view overdue|today|upcoming|urgent|all] [--project X] [--json]
 husk notify [--nag] [--dry-run]                  # see Notifications
 husk project add "Chores" [--color "#FFCC00"]  # needs [caldav]; syncs afterwards
+husk project remove "Chores" [--move-to Life | --delete-tasks]   # refuses a list with tasks otherwise
 husk sync [--discover]                           # --discover after a new list on a phone
 husk theme dump | check <file>
 ```

@@ -1,16 +1,16 @@
-//! The one request husk makes to the CalDAV server itself: creating a
-//! list. Everything else goes through vdirsyncer. A list made on the vdir
-//! side reaches the server without a name (vdirsyncer's MKCOL carries
-//! none, and Radicale then reports the collection path as the name, which
-//! the next metasync copies back over the local one), so the server side
-//! is created first, with the name, and discover plus metasync bring it
-//! down.
+//! The two requests husk makes to the CalDAV server itself: creating and
+//! deleting a list. Everything else goes through vdirsyncer. A list made on
+//! the vdir side reaches the server without a name (vdirsyncer's MKCOL
+//! carries none, and Radicale then reports the collection path as the
+//! name, which the next metasync copies back over the local one), so the
+//! server side is created first, with the name, and discover plus metasync
+//! bring it down.
 
 use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use ureq::http::Request;
+use ureq::http::{Request, Response};
 use ureq::tls::{RootCerts, TlsConfig};
 
 use crate::config::Caldav;
@@ -19,6 +19,34 @@ use crate::config::Caldav;
 /// VTODOs, named `name`. The id doubles as the vdir directory name, so the
 /// caller picks it and creates the local side with the same one.
 pub fn create_list(caldav: &Caldav, id: &str, name: &str, color: Option<&str>) -> Result<()> {
+    let (url, response) = send(caldav, "MKCOL", id, mkcol_body(name, color))?;
+    match response.status().as_u16() {
+        201 => Ok(()),
+        401 | 403 => bail!("the server refused the credentials for {}", caldav.username),
+        405 => bail!("a list with id {id} already exists on the server"),
+        _ => Err(unexpected("MKCOL", &url, response)),
+    }
+}
+
+/// Deletes the collection and every task in it. A collection that is
+/// already gone counts as deleted, so a list removed on a phone can still
+/// be removed locally through the same path.
+pub fn delete_list(caldav: &Caldav, id: &str) -> Result<()> {
+    let (url, response) = send(caldav, "DELETE", id, String::new())?;
+    match response.status().as_u16() {
+        200 | 204 | 404 => Ok(()),
+        401 | 403 => bail!("the server refused the credentials for {}", caldav.username),
+        _ => Err(unexpected("DELETE", &url, response)),
+    }
+}
+
+/// One authenticated request to `<url>/<username>/<id>/`.
+fn send(
+    caldav: &Caldav,
+    method: &str,
+    id: &str,
+    body: String,
+) -> Result<(String, Response<ureq::Body>)> {
     let password = password(&caldav.password_command)?;
     let url = format!(
         "{}/{}/{}/",
@@ -45,33 +73,32 @@ pub fn create_list(caldav: &Caldav, id: &str, name: &str, color: Option<&str>) -
             .build(),
     );
     let request = Request::builder()
-        .method("MKCOL")
+        .method(method)
         .uri(&url)
         .header("Authorization", auth)
         .header("Content-Type", "application/xml; charset=utf-8")
-        .body(mkcol_body(name, color))
-        .context("build the MKCOL request")?;
-    let response = agent.run(request).with_context(|| format!("MKCOL {url}"))?;
-    match response.status().as_u16() {
-        201 => Ok(()),
-        401 | 403 => bail!("the server refused the credentials for {}", caldav.username),
-        405 => bail!("a list with id {id} already exists on the server"),
-        status => {
-            let reason = response
-                .status()
-                .canonical_reason()
-                .unwrap_or("")
-                .to_string();
-            // Radicale's error bodies are XML; only a plain-text line helps.
-            let text = response.into_body().read_to_string().unwrap_or_default();
-            let line = text
-                .lines()
-                .map(str::trim)
-                .find(|l| !l.is_empty() && !l.starts_with('<'))
-                .unwrap_or("");
-            bail!("MKCOL {url} answered {status} {reason} {line}");
-        }
-    }
+        .body(body)
+        .with_context(|| format!("build the {method} request"))?;
+    let response = agent
+        .run(request)
+        .with_context(|| format!("{method} {url}"))?;
+    Ok((url, response))
+}
+
+fn unexpected(method: &str, url: &str, response: Response<ureq::Body>) -> anyhow::Error {
+    let status = response.status();
+    let reason = status.canonical_reason().unwrap_or("").to_string();
+    // Radicale's error bodies are XML; only a plain-text line helps.
+    let text = response.into_body().read_to_string().unwrap_or_default();
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('<'))
+        .unwrap_or("");
+    anyhow::anyhow!(
+        "{method} {url} answered {} {reason} {line}",
+        status.as_u16()
+    )
 }
 
 /// An extended MKCOL (RFC 5689): the resource type, the component set and
