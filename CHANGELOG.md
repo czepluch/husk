@@ -3,7 +3,7 @@
 Notable changes per release. Versions follow semver; the format follows
 Keep a Changelog.
 
-## Unreleased
+## 0.3.0 - 2026-10-14
 
 - Lists can be created from husk: `P` in the TUI and `husk project add`
   make the collection on the server with its name and color first, then
