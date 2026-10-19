@@ -70,9 +70,14 @@ metadata = ["displayname", "color"]
 
 With `"from a"` in `collections`, vdirsyncer asks before creating a list that
 exists on one side only, and husk's background sync cannot answer; the bar
-then says to run `husk sync --discover` in a terminal. Mind that a directory
-only the vdir has (a list deleted on a phone, say) stays visible in husk but
-is not synced until `husk project remove` cleans it up.
+then says to run `husk sync --discover` in a terminal.
+
+### Health
+
+Two things can go wrong with the data without any sync error, and husk shows both.
+A file another client wrote in a way husk cannot parse is skipped, so one bad file never takes a list down, but the bar then says `1 unreadable` and `husk list` prints the file and the reason on stderr.
+A directory only the vdir has (a list deleted on a phone, say) stays visible but syncs nowhere; husk reads vdirsyncer's own `<status_path>/<pair>.collections` (`sync_collections` in the config, default above) and draws such a list muted in the sidebar, counts it as `1 unsynced` in the bar and says what to do when you land on it: `husk project remove <name> --move-to <list>` keeps its tasks.
+vdirsyncer rewrites that file on `discover` only, so a list deleted on a phone shows as a sync failure first and as unsynced after `husk sync --discover` (or any `P` or `X`).
 
 ## Configuration
 
@@ -86,6 +91,7 @@ date_format = "%Y-%m-%d"
 time_format = "%H:%M"
 default_alarm_leads = ["0m"]                # one alarm, at the due time
 theme = "phosphor"                      # phosphor, ansi, or a Base16 scheme file
+sync_collections = "~/.local/share/vdirsyncer/status/tasks.collections"  # see Health
 
 [caldav]                                # only for creating and removing lists
 url = "https://dav.example.org/"        # the same server vdirsyncer talks to
@@ -133,7 +139,7 @@ task's first alarm as its reminder time, so keep it to one.
 
 ```
 husk add "Call bank due:tomorrow 09:00 +money"   # waits for the sync
-husk list [--view overdue|today|upcoming|urgent|all] [--project X] [--json]
+husk list [--view overdue|today|upcoming|urgent|all] [--project X] [--json]   # warnings on stderr
 husk notify [--nag] [--dry-run]                  # see Notifications
 husk project add "Chores" [--color "#FFCC00"]  # needs [caldav]; syncs afterwards
 husk project remove "Chores" [--move-to Life | --delete-tasks]   # refuses a list with tasks otherwise

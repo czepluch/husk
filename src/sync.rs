@@ -1,6 +1,7 @@
 //! Runs the sync command in a background thread: after every write,
 //! debounced so a burst of edits becomes one run, and on demand from `s`.
 
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,6 +11,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
+
+use crate::model::ProjectId;
 
 /// Requests arriving within this window are merged into one run.
 const DEBOUNCE: Duration = Duration::from_millis(500);
@@ -193,6 +196,38 @@ pub fn run(command: &[String]) -> Result<(), String> {
 
 const DISCOVER_PROMPT: &str = "Should vdirsyncer attempt to create it?";
 
+/// The collections vdirsyncer pairs with the server, from the
+/// `<status_path>/<pair>.collections` file its discover writes: a JSON
+/// object whose `collections` is a list of `[name, [side_a, side_b]]`,
+/// each side holding the storage's `path` or `url`. Only entries whose
+/// local side lives in `vdir` count, so a file about another vdir says
+/// nothing. `None` when the file is missing, unreadable or about another
+/// vdir, so nothing is reported.
+pub fn synced_collections(path: &Path, vdir: &Path) -> Option<Vec<ProjectId>> {
+    let text = fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let names: Vec<ProjectId> = value
+        .get("collections")?
+        .as_array()?
+        .iter()
+        .filter(|entry| {
+            entry
+                .get(1)
+                .and_then(|sides| sides.as_array())
+                .is_some_and(|sides| {
+                    sides.iter().any(|side| {
+                        side.get("path")
+                            .and_then(|p| p.as_str())
+                            .is_some_and(|p| Path::new(p).parent() == Some(vdir))
+                    })
+                })
+        })
+        .filter_map(|entry| entry.get(0)?.as_str())
+        .map(ProjectId::new)
+        .collect();
+    (!names.is_empty()).then_some(names)
+}
+
 fn run_quiet(program: &str, args: &[String]) -> Result<(), String> {
     let output = Command::new(program)
         .args(args)
@@ -217,4 +252,46 @@ fn run_quiet(program: &str, args: &[String]) -> Result<(), String> {
         .trim()
         .to_string();
     Err(format!("{program} failed: {reason}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_collections_file_lists_the_paired_names_under_this_vdir() {
+        let dir = std::env::temp_dir().join(format!("husk-sync-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tasks.collections");
+        let vdir = dir.join("tasks");
+        assert_eq!(synced_collections(&path, &vdir), None, "missing file");
+        let entry = |name: &str, under: &Path| {
+            format!(
+                "[\"{name}\", [{{\"collection\": \"{name}\", \"path\": \"{}\"}}, {{\"url\": \"https://x/{name}\"}}]]",
+                under.join(name).display()
+            )
+        };
+        let text = format!(
+            "{{\"collections\": [{}, {}, {}]}}",
+            entry("A", &vdir),
+            entry("B", &vdir),
+            entry("C", &dir.join("other"))
+        );
+        fs::write(&path, text).unwrap();
+        assert_eq!(
+            synced_collections(&path, &vdir),
+            Some(vec![ProjectId::new("A"), ProjectId::new("B")]),
+            "only the entries under this vdir"
+        );
+        assert_eq!(
+            synced_collections(&path, &dir.join("elsewhere")),
+            None,
+            "a file about another vdir says nothing"
+        );
+        fs::write(&path, "{\"collections\": null}").unwrap();
+        assert_eq!(synced_collections(&path, &vdir), None, "unexpected shape");
+        fs::write(&path, "nope").unwrap();
+        assert_eq!(synced_collections(&path, &vdir), None, "not JSON");
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

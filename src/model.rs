@@ -20,6 +20,16 @@ impl ProjectId {
     }
 }
 
+/// A stored item that does not read as a task. `Store::tasks` skips it;
+/// `Store::problems` names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub project: ProjectId,
+    /// The item's name within the project (the file name in a vdir).
+    pub item: String,
+    pub reason: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Project {
     pub id: ProjectId,

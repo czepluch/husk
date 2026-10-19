@@ -348,3 +348,25 @@ fn restore_overwrites_an_edited_task_and_outranks_it() {
     gone.project = ProjectId::new("solidity");
     assert!(store.restore(&gone).is_err(), "unknown project");
 }
+
+#[test]
+fn problems_name_the_files_tasks_skips() {
+    let dir = common::fixture_vdir();
+    let store = store(&dir);
+    assert!(store.problems().unwrap().is_empty());
+    let before = store.tasks(None).unwrap().len();
+    fs::write(dir.path().join("life/odd.ics"), "not a calendar\n").unwrap();
+    fs::write(dir.path().join("argot/note.txt"), "ignored\n").unwrap();
+
+    let problems = store.problems().unwrap();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].project, life());
+    assert_eq!(problems[0].item, "odd.ics");
+    assert!(!problems[0].reason.is_empty());
+    assert!(
+        !problems[0].reason.contains("odd.ics"),
+        "the reason is the cause, not the path: {}",
+        problems[0].reason
+    );
+    assert_eq!(store.tasks(None).unwrap().len(), before);
+}

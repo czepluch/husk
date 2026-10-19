@@ -366,3 +366,52 @@ fn theme_dump_and_check_work_with_flavors_and_scheme_files() {
         "base0B is the accent:\n{out}"
     );
 }
+
+#[test]
+fn list_warns_on_stderr_about_unreadable_files_and_unsynced_lists() {
+    let s = setup("\"true\"");
+    let (ok, _, err) = husk(&s, &["list"]);
+    assert!(ok && err.is_empty(), "{err}");
+
+    fs::write(s.dir.path().join("life/odd.ics"), "not a calendar\n").unwrap();
+    let collections = s.dir.path().join("tasks.collections");
+    let entry = |name: &str| {
+        format!(
+            r#"["{name}", [{{"collection": "{name}", "path": "{}"}}, {{"url": "https://x/{name}"}}]]"#,
+            s.dir.path().join(name).display()
+        )
+    };
+    fs::write(
+        &collections,
+        format!(
+            r#"{{"collections": [{}, {}]}}"#,
+            entry("life"),
+            entry("argot")
+        ),
+    )
+    .unwrap();
+    let mut config = fs::read_to_string(&s.config).unwrap();
+    config.push_str(&format!(
+        "sync_collections = \"{}\"\n",
+        collections.display()
+    ));
+    fs::write(&s.config, config).unwrap();
+
+    let (ok, out, err) = husk(&s, &["list", "--view", "all"]);
+    assert!(ok, "{err}");
+    assert!(
+        out.contains("Remember the milk"),
+        "the list itself is unchanged: {out}"
+    );
+    assert!(
+        err.contains("warning: life/odd.ics cannot be read: "),
+        "{err}"
+    );
+    assert!(
+        err.contains("warning: list solidity is not synced: missing from "),
+        "{err}"
+    );
+    assert!(!err.contains("Life is not synced"), "{err}");
+    let (ok, out, err) = husk(&s, &["list", "--json"]);
+    assert!(ok && out.trim_start().starts_with('['), "{err}");
+}

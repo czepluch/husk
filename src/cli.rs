@@ -13,6 +13,7 @@ use crate::config::Config;
 use crate::model::{Due, NewTask, Priority, Project, ProjectId, Task, find_project, project_name};
 use crate::quickadd;
 use crate::store::Store;
+use crate::sync;
 
 /// One task as `husk list` reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -181,7 +182,12 @@ pub fn remove_project(
         "removing a list needs [caldav] url, username and password_command in the config",
     )?;
     let tasks = store.tasks(Some(id))?;
-    let unreadable = store.unreadable(id)?;
+    let unreadable: Vec<String> = store
+        .problems()?
+        .into_iter()
+        .filter(|p| p.project == *id)
+        .map(|p| p.item)
+        .collect();
     match leftover {
         Leftover::Keep => {
             let items = tasks.len() + unreadable.len();
@@ -229,6 +235,45 @@ pub fn remove_project(
         }
     }?;
     Ok(project)
+}
+
+/// What the TUI's bar counts, as lines for stderr: items husk cannot read
+/// and local lists vdirsyncer no longer pairs with the server.
+pub fn warnings(store: &dyn Store, config: &Config) -> Result<Vec<String>> {
+    let projects = store.projects()?;
+    let mut lines: Vec<String> = store
+        .problems()?
+        .into_iter()
+        .map(|p| {
+            format!(
+                "warning: {}/{} cannot be read: {}",
+                p.project.as_str(),
+                p.item,
+                p.reason
+            )
+        })
+        .collect();
+    for id in unsynced(&projects, config) {
+        lines.push(format!(
+            "warning: list {} is not synced: missing from {}",
+            project_name(&projects, &id),
+            config.sync_collections.display()
+        ));
+    }
+    Ok(lines)
+}
+
+/// Local lists that vdirsyncer does not pair with the server; empty when
+/// its collections file is missing.
+pub fn unsynced(projects: &[Project], config: &Config) -> Vec<ProjectId> {
+    match sync::synced_collections(&config.sync_collections, &config.vdir) {
+        Some(synced) => projects
+            .iter()
+            .filter(|p| !synced.contains(&p.id))
+            .map(|p| p.id.clone())
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 fn is_color(text: &str) -> bool {

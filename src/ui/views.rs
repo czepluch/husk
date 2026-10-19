@@ -101,6 +101,7 @@ fn draw_views(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         }
         let count = app.count(view);
         let style = match view {
+            View::Project(id) if app.is_unsynced(id) => theme.muted,
             View::Project(id) => app
                 .projects
                 .iter()
@@ -449,8 +450,41 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         (Mode::Input | Mode::Form, Some(message)) => Some((message.clone(), true)),
         _ => sync_status(app),
     };
-    let status_width =
-        u16::try_from(status.as_ref().map_or(0, |(t, _)| t.width() + 2)).unwrap_or(0);
+    // Counts of what is wrong with the data sit in front of the status.
+    let mut health = Vec::new();
+    if !app.problems.is_empty() {
+        health.push(format!("{} unreadable", app.problems.len()));
+    }
+    if !app.unsynced.is_empty() {
+        health.push(format!("{} unsynced", app.unsynced.len()));
+    }
+    let mut spans: Vec<Span> = Vec::new();
+    let status = status.into_iter().map(|(text, failed)| {
+        (
+            text,
+            if failed {
+                theme.overdue
+            } else {
+                theme.status_bar
+            },
+        )
+    });
+    for (text, style) in health
+        .into_iter()
+        .map(|text| (text, theme.overdue))
+        .chain(status)
+    {
+        if !spans.is_empty() {
+            spans.push(Span::styled(" · ", theme.status_bar));
+        }
+        spans.push(Span::styled(text, style));
+    }
+    let right_line = Line::from(spans);
+    let status_width = if right_line.spans.is_empty() {
+        0
+    } else {
+        u16::try_from(right_line.width() + 2).unwrap_or(0)
+    };
     let [left, right] =
         Layout::horizontal([Constraint::Min(1), Constraint::Length(status_width)]).areas(area);
     let line = match app.mode {
@@ -522,14 +556,14 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         ),
     };
     frame.render_widget(Paragraph::new(line).style(theme.status_bar), left);
-    if let Some((text, failed)) = status {
-        let style = if failed {
-            theme.overdue
-        } else {
-            theme.status_bar
-        };
+    if status_width > 0 {
+        let mut spans = vec![Span::raw(" ")];
+        spans.extend(right_line.spans);
+        spans.push(Span::raw(" "));
         frame.render_widget(
-            Paragraph::new(Line::styled(format!(" {text} "), style)).right_aligned(),
+            Paragraph::new(Line::from(spans))
+                .style(theme.status_bar)
+                .right_aligned(),
             right,
         );
     }

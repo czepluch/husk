@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::atomic::write_atomic;
 use crate::ical::{codec, vtodo};
-use crate::model::{NewTask, Project, ProjectId, Task};
+use crate::model::{NewTask, Problem, Project, ProjectId, Task};
 use crate::store::Store;
 
 pub struct VdirStore {
@@ -264,18 +264,25 @@ impl Store for VdirStore {
         })
     }
 
-    fn unreadable(&self, project: &ProjectId) -> Result<Vec<String>> {
-        Ok(self
-            .ics_files(project)?
-            .into_iter()
-            .filter(|path| self.read_task(project, path).is_err())
-            .map(|path| {
-                path.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect())
+    fn problems(&self) -> Result<Vec<Problem>> {
+        let mut problems = Vec::new();
+        for id in self.project_ids()? {
+            for path in self.ics_files(&id)? {
+                if let Err(error) = self.read_task(&id, &path) {
+                    problems.push(Problem {
+                        project: id.clone(),
+                        item: path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                        // The root cause only; the context is the path.
+                        reason: error.root_cause().to_string(),
+                    });
+                }
+            }
+        }
+        Ok(problems)
     }
 
     fn delete_project(&self, id: &ProjectId, with_tasks: bool) -> Result<()> {

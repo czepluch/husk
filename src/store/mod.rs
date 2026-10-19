@@ -7,7 +7,7 @@ pub use vdir::VdirStore;
 
 use anyhow::Result;
 
-use crate::model::{NewTask, Project, ProjectId, Task};
+use crate::model::{NewTask, Problem, Project, ProjectId, Task};
 
 pub trait Store {
     fn projects(&self) -> Result<Vec<Project>>;
@@ -28,9 +28,9 @@ pub trait Store {
     /// A new, empty project under a caller-chosen id, so the local side can
     /// match a collection created on the server under the same id.
     fn create_project(&self, id: &ProjectId, name: &str, color: Option<&str>) -> Result<Project>;
-    /// Items of a project that do not read as tasks, by name; `tasks` skips
-    /// them silently.
-    fn unreadable(&self, project: &ProjectId) -> Result<Vec<String>>;
+    /// Every item that does not read as a task, with the reason; `tasks`
+    /// skips them silently.
+    fn problems(&self) -> Result<Vec<Problem>>;
     /// Removes a project. Without `with_tasks` one that still holds items
     /// is refused; with it everything in it goes.
     fn delete_project(&self, id: &ProjectId, with_tasks: bool) -> Result<()>;

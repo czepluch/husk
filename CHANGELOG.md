@@ -3,6 +3,16 @@
 Notable changes per release. Versions follow semver; the format follows
 Keep a Changelog.
 
+## Unreleased
+
+- The bar counts what is silently wrong with the data: `N unreadable`
+  for files the store skips because they do not parse, and `N unsynced`
+  for local lists vdirsyncer no longer pairs with the server, read from
+  its `<pair>.collections` file (`sync_collections` in the config). An
+  unsynced list is drawn muted and landing on it names the `husk project
+  remove --move-to` command that keeps its tasks. `husk list` prints the
+  same as warnings on stderr.
+
 ## 0.3.0 - 2026-10-14
 
 - Lists can be created from husk: `P` in the TUI and `husk project add`

@@ -79,3 +79,19 @@ fn expand_home_only_touches_a_leading_tilde() {
     let home = expand_home(Path::new("~/x"));
     assert!(!home.starts_with("~") && home.ends_with("x"));
 }
+
+#[test]
+fn the_collections_file_defaults_to_vdirsyncers_and_expands_home() {
+    let config = Config::default();
+    assert!(
+        config
+            .sync_collections
+            .ends_with(".local/share/vdirsyncer/status/tasks.collections")
+            && !config.sync_collections.starts_with("~")
+    );
+    let config = Config::parse("sync_collections = \"~/st/pair.collections\"\n").unwrap();
+    assert!(
+        config.sync_collections.ends_with("st/pair.collections")
+            && !config.sync_collections.starts_with("~")
+    );
+}

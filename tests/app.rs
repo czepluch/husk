@@ -1092,3 +1092,67 @@ fn only_events_that_can_change_a_file_reload_the_theme() {
         assert!(ui::changes_a_file(&notify::Event::new(kind)), "{kind:?}");
     }
 }
+
+#[test]
+fn the_bar_counts_unreadable_files_and_unsynced_lists() {
+    let mut s = sample();
+    let theme = Theme::load("phosphor", None).unwrap();
+    let dir = s._dir.path().to_path_buf();
+    let mut terminal = Terminal::new(TestBackend::new(90, 12)).unwrap();
+    terminal.draw(|f| views::draw(f, &s.app, &theme)).unwrap();
+    let text = screen(&terminal);
+    assert!(
+        !text.contains("unreadable") && !text.contains("unsynced"),
+        "{text}"
+    );
+
+    fs::write(dir.join("life/odd.ics"), "not a calendar\n").unwrap();
+    let collections = dir.join("tasks.collections");
+    fs::write(
+        &collections,
+        format!(
+            r#"{{"collections": [["life", [{{"collection": "life", "path": "{}"}}, {{"url": "https://x/life"}}]]]}}"#,
+            dir.join("life").display()
+        ),
+    )
+    .unwrap();
+    s.app.config.sync_collections = collections;
+    s.app.reload();
+    assert_eq!(s.app.problems.len(), 1);
+    assert_eq!(s.app.unsynced, [ProjectId::new("argot")]);
+    terminal.draw(|f| views::draw(f, &s.app, &theme)).unwrap();
+    let text = screen(&terminal);
+    let bar = text.lines().last().unwrap();
+    assert!(bar.contains("1 unreadable · 1 unsynced"), "{bar}");
+
+    // The unsynced list is drawn muted in the sidebar.
+    let (y, line) = text
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains(" Argot "))
+        .unwrap_or_else(|| panic!("{text}"));
+    let x = line.find(" Argot ").unwrap() + 1;
+    let cell = terminal
+        .backend()
+        .buffer()
+        .cell((x as u16, y as u16))
+        .unwrap();
+    assert_eq!(cell.fg, theme.muted.fg.unwrap(), "muted list name");
+
+    // Landing on it in the left pane says so.
+    s.app.handle_key(code(KeyCode::Tab));
+    assert_eq!(s.app.pane, Pane::Views);
+    let p = s
+        .app
+        .views()
+        .iter()
+        .position(|v| *v == View::Project(ProjectId::new("argot")))
+        .unwrap();
+    s.app.view_index = p - 1;
+    s.app.handle_key(key('j'));
+    let message = s.app.message.clone().unwrap_or_default();
+    assert!(
+        message.contains("Argot is not synced") && message.contains("--move-to"),
+        "{message}"
+    );
+}

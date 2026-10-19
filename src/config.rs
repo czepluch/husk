@@ -19,6 +19,9 @@ pub struct Config {
     pub theme: String,
     /// The server, for the one thing vdirsyncer cannot do: creating a list.
     pub caldav: Option<Caldav>,
+    /// vdirsyncer's `<status_path>/<pair>.collections`, the lists it pairs
+    /// with the server; a local list missing from it is shown as unsynced.
+    pub sync_collections: PathBuf,
 }
 
 /// Mirrors the vdirsyncer storage: the server root, the user and a command
@@ -42,6 +45,9 @@ impl Default for Config {
             default_alarm_leads: vec!["0m".to_string()],
             theme: "phosphor".to_string(),
             caldav: None,
+            sync_collections: expand_home(Path::new(
+                "~/.local/share/vdirsyncer/status/tasks.collections",
+            )),
         }
     }
 }
@@ -79,6 +85,7 @@ impl Config {
     pub fn parse(text: &str) -> Result<Self> {
         let mut config: Self = toml::from_str(text)?;
         config.vdir = expand_home(&config.vdir);
+        config.sync_collections = expand_home(&config.sync_collections);
         if let Some(caldav) = &mut config.caldav {
             for arg in &mut caldav.password_command {
                 *arg = expand_home(Path::new(arg)).to_string_lossy().into_owned();

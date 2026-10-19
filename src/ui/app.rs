@@ -11,7 +11,7 @@ use crate::alarms;
 use crate::cli;
 use crate::config::Config;
 use crate::ical::{codec, tz, vtodo};
-use crate::model::{Alarm, Due, NewTask, Priority, Project, ProjectId, Task};
+use crate::model::{Alarm, Due, NewTask, Priority, Problem, Project, ProjectId, Task};
 use crate::quickadd;
 use crate::recur;
 use crate::store::Store;
@@ -194,6 +194,10 @@ pub struct App {
     syncer: Syncer,
     pub projects: Vec<Project>,
     pub tasks: Vec<Task>,
+    /// Items the store could not read as tasks.
+    pub problems: Vec<Problem>,
+    /// Local lists vdirsyncer does not pair with the server.
+    pub unsynced: Vec<ProjectId>,
     pub pane: Pane,
     pub view_index: usize,
     /// The selected task's UID. The list is re-sorted as time passes, so the
@@ -238,6 +242,8 @@ impl App {
     pub fn new(config: Config, store: Box<dyn Store>, now: DateTime<Local>) -> Result<Self> {
         let projects = store.projects()?;
         let tasks = store.tasks(None)?;
+        let problems = store.problems()?;
+        let unsynced = cli::unsynced(&projects, &config);
         let stamp = store.stamp().unwrap_or(0);
         let syncer = Syncer::new(config.sync_command.clone());
         // Pick up what the phones did since the last run.
@@ -248,6 +254,8 @@ impl App {
             syncer,
             projects,
             tasks,
+            problems,
+            unsynced,
             pane: Pane::Tasks,
             view_index: 1,
             selected: None,
@@ -1232,6 +1240,24 @@ impl App {
         if let Ok(projects) = self.store.projects() {
             self.projects = projects;
         }
+        self.problems = self.store.problems().unwrap_or_default();
+        self.unsynced = cli::unsynced(&self.projects, &self.config);
+    }
+
+    pub fn is_unsynced(&self, id: &ProjectId) -> bool {
+        self.unsynced.contains(id)
+    }
+
+    /// Says once, on landing on it, that a list syncs nowhere.
+    fn note_unsynced(&mut self) {
+        if let View::Project(id) = self.view()
+            && self.is_unsynced(&id)
+        {
+            let name = self.project_name(&id);
+            self.notify(format!(
+                "{name} is not synced: husk project remove {name:?} --move-to <list> keeps its tasks"
+            ));
+        }
     }
 
     fn report(&mut self, result: Result<String>) {
@@ -1253,6 +1279,7 @@ impl App {
             Pane::Views => {
                 self.view_index = step(self.view_index, delta, self.views().len());
                 self.reset_cursor();
+                self.note_unsynced();
             }
             Pane::Tasks => self.move_task(delta),
         }

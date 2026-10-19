@@ -178,6 +178,9 @@ fn main() -> Result<()> {
             } else {
                 print!("{}", cli::text(&rows));
             }
+            for line in cli::warnings(&store, &config)? {
+                eprintln!("{line}");
+            }
             Ok(())
         }
         Command::Notify {
