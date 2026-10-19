@@ -821,6 +821,10 @@ fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {
     frame.render_widget(Clear, popup);
     let help = Paragraph::new(Text::from(lines))
         .style(theme.base)
-        .block(block(theme, " Help ", true));
+        .block(block(
+            theme,
+            concat!(" Help · husk ", env!("CARGO_PKG_VERSION"), " "),
+            true,
+        ));
     frame.render_widget(help, popup);
 }

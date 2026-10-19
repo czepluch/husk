@@ -482,7 +482,12 @@ fn frames_render_the_layout_the_detail_and_the_help() {
     app.handle_key(key('?'));
     terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
     let text = screen(&terminal);
-    for expected in ["Help", "switch pane", "filter by text", "quit"] {
+    for expected in [
+        concat!("Help · husk ", env!("CARGO_PKG_VERSION")),
+        "switch pane",
+        "filter by text",
+        "quit",
+    ] {
         assert!(text.contains(expected), "missing {expected:?} in\n{text}");
     }
 
