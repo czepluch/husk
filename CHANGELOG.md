@@ -5,6 +5,10 @@ Keep a Changelog.
 
 ## Unreleased
 
+- Prompts, the filter and the form fields show the terminal's own cursor
+  at the insertion point instead of a drawn half-block glyph, so it takes
+  the shape and blink the terminal is set to.
+
 - The bar counts what is silently wrong with the data: `N unreadable`
   for files the store skips because they do not parse, and `N unsynced`
   for local lists vdirsyncer no longer pairs with the server, read from

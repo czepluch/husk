@@ -126,10 +126,18 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
 }
 
 fn render(app: &App) -> String {
+    render_with_cursor(app).0
+}
+
+/// The screen and where the terminal's own cursor was left, `None` while
+/// it is hidden; it shows only where something is being typed.
+fn render_with_cursor(app: &App) -> (String, Option<ratatui::layout::Position>) {
     let theme = Theme::load("phosphor", None).unwrap();
     let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
     terminal.draw(|f| views::draw(f, app, &theme)).unwrap();
-    screen(&terminal)
+    let backend = terminal.backend();
+    let cursor = backend.cursor_visible().then(|| backend.cursor_position());
+    (screen(&terminal), cursor)
 }
 
 #[test]
@@ -295,7 +303,7 @@ fn a_adds_in_the_current_project_with_default_alarms_and_u_removes_it() {
     type_text(&mut s.app, "Call bank due:tomorrow 09:00 +money pri:h");
     let typing = render(&s.app);
     assert!(
-        typing.contains("Call bank due:tomorrow 09:00 +money pri:h▌"),
+        typing.contains("Call bank due:tomorrow 09:00 +money pri:h"),
         "{typing}"
     );
     assert!(
@@ -419,6 +427,20 @@ fn e_t_p_and_upper_t_edit_the_selected_task() {
     assert_eq!(s.app.input.as_ref().unwrap().buffer, "");
     assert!(render(&s.app).contains("due> "));
     type_text(&mut s.app, "fri 10:00");
+    let (screen, cursor) = render_with_cursor(&s.app);
+    let cursor = cursor.expect("the terminal cursor shows in a prompt");
+    let bar = screen.lines().last().unwrap();
+    assert_eq!(
+        (usize::from(cursor.x), usize::from(cursor.y)),
+        (" due> fri 10:00".len(), screen.lines().count() - 1),
+        "right after the typed text in the bar: {bar}"
+    );
+    s.app.handle_key(code(KeyCode::Left));
+    s.app.handle_key(code(KeyCode::Left));
+    let (_, moved) = render_with_cursor(&s.app);
+    assert_eq!(usize::from(moved.unwrap().x), " due> fri 10:00".len() - 2);
+    let (_, hidden) = render_with_cursor(&sample().app);
+    assert_eq!(hidden, None, "no cursor outside prompts");
     s.app.handle_key(code(KeyCode::Enter));
     let text = file(&s, "life/no-due.ics");
     let due = format!(
@@ -1347,14 +1369,21 @@ fn selectors_wrap_and_long_titles_scroll() {
 
     s.app.handle_key(key('a'));
     type_text(&mut s.app, &"x".repeat(60));
-    let screen = render(&s.app);
-    assert!(
-        screen.contains(&format!("{}▌", "x".repeat(48))),
-        "the window keeps the cursor visible:\n{screen}"
-    );
+    let (screen, cursor) = render_with_cursor(&s.app);
+    let cursor = cursor.expect("the cursor shows in the focused field");
+    let row = screen
+        .lines()
+        .find(|l| l.contains(&"x".repeat(48)))
+        .unwrap_or_else(|| panic!("the window keeps the text visible:\n{screen}"));
     assert!(
         !screen.contains(&"x".repeat(49)),
         "clipped on the left, not the right:\n{screen}"
+    );
+    let end = row.find(&"x".repeat(48)).unwrap() + 48;
+    assert_eq!(
+        usize::from(cursor.x),
+        row[..end].chars().count(),
+        "the terminal cursor sits right after the last x:\n{screen}"
     );
     s.app.handle_key(code(KeyCode::Esc));
 }

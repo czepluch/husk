@@ -490,14 +490,14 @@ fn draw_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let line = match app.mode {
         Mode::Filter => {
             let (before, after) = app.filter.split_at(byte_of(&app.filter, app.filter_cursor));
+            place_cursor(frame, left, &format!(" /{before}"));
             Line::from(vec![
                 Span::styled(" /", theme.help_key),
                 Span::styled(before.to_string(), theme.base),
-                Span::styled("▌", theme.accent),
                 Span::styled(after.to_string(), theme.base),
             ])
         }
-        Mode::Input => prompt_line(app, theme),
+        Mode::Input => prompt_line(frame, app, theme, left),
         Mode::Confirm => Line::from(vec![
             Span::styled(
                 format!(
@@ -589,7 +589,7 @@ fn sync_status(app: &App) -> Option<(String, bool)> {
     })
 }
 
-fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
+fn prompt_line<'a>(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) -> Line<'a> {
     let Some(input) = &app.input else {
         return Line::raw("");
     };
@@ -605,13 +605,23 @@ fn prompt_line<'a>(app: &App, theme: &Theme) -> Line<'a> {
     // typing starts, so nothing shifts under the cursor.
     let placeholder = if input.buffer.is_empty() { hint } else { "" };
     let (before, after) = input.buffer.split_at(byte_of(&input.buffer, input.cursor));
+    place_cursor(frame, area, &format!(" {prompt}> {before}"));
     Line::from(vec![
         Span::styled(format!(" {prompt}> "), theme.help_key),
         Span::styled(before.to_string(), theme.base),
-        Span::styled("▌", theme.accent),
         Span::styled(after.to_string(), theme.base),
         Span::styled(placeholder.to_string(), theme.muted),
     ])
+}
+
+/// Puts the terminal's own cursor after `before` on the first row of
+/// `area`, so it takes the shape and blink the terminal is set to.
+fn place_cursor(frame: &mut Frame, area: Rect, before: &str) {
+    let x = u16::try_from(before.width()).unwrap_or(u16::MAX);
+    frame.set_cursor_position((
+        area.x.saturating_add(x).min(area.right().saturating_sub(1)),
+        area.y,
+    ));
 }
 
 fn draw_picker(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
@@ -659,7 +669,8 @@ fn draw_form(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         .map_or(String::new(), |p| p.name.clone());
     let lines: Vec<Line> = FORM_FIELDS
         .iter()
-        .map(|field| {
+        .enumerate()
+        .map(|(row, field)| {
             let focused = *field == form.field;
             let label = match field {
                 FormField::Title => "title",
@@ -684,8 +695,15 @@ fn draw_form(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
                     if focused {
                         let budget = usize::from(width).saturating_sub(15);
                         let (before, after) = window(text, form.cursor, budget);
+                        // Inside the border, on this field's row.
+                        let inner = Rect::new(
+                            popup.x + 1,
+                            popup.y + 1 + u16::try_from(row).unwrap_or(u16::MAX),
+                            width.saturating_sub(2),
+                            1,
+                        );
+                        place_cursor(frame, inner, &format!("{marker}{label:<9}{before}"));
                         spans.push(Span::styled(before, theme.base));
-                        spans.push(Span::styled("▌", theme.accent));
                         spans.push(Span::styled(after, theme.base));
                     } else {
                         spans.push(Span::styled(text.clone(), theme.base));
