@@ -5,6 +5,10 @@ Keep a Changelog.
 
 ## Unreleased
 
+- The TUI draws a frame only when something changed, or once a minute
+  for the clock-bound labels, instead of every half second. An idle husk
+  writes nothing to the terminal, which lets the terminal's cursor blink.
+
 - Prompts, the filter and the form fields show the terminal's own cursor
   at the insertion point instead of a drawn half-block glyph, so it takes
   the shape and blink the terminal is set to.

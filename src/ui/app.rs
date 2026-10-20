@@ -231,8 +231,14 @@ pub struct App {
     undo: Vec<Undo>,
     editor_request: Option<EditorRequest>,
     seen_runs: u64,
+    /// Whether the last frame showed the sync as running.
+    seen_running: bool,
     /// The store's change stamp at the last reload.
     stamp: u64,
+    /// Something shown has changed since the last frame. The run loop
+    /// draws only then (and once a minute for the clock-bound labels), so
+    /// an idle husk writes nothing to the terminal and its cursor can blink.
+    dirty: bool,
     pub now: DateTime<Local>,
     pub quit: bool,
 }
@@ -277,7 +283,9 @@ impl App {
             undo: Vec::new(),
             editor_request: None,
             seen_runs: 0,
+            seen_running: false,
             stamp,
+            dirty: true,
             now,
             quit: false,
         })
@@ -388,8 +396,13 @@ impl App {
     pub fn poll(&mut self) {
         if self.message.is_some() && (self.now - self.message_at).num_seconds() >= MESSAGE_SECONDS {
             self.message = None;
+            self.dirty = true;
         }
         let state = self.syncer.state();
+        if state.running != self.seen_running {
+            self.seen_running = state.running;
+            self.dirty = true;
+        }
         let finished = state.runs != self.seen_runs;
         let changed = self.store.stamp().is_ok_and(|stamp| stamp != self.stamp);
         if finished || changed {
@@ -413,6 +426,16 @@ impl App {
         self.syncer.flush(timeout)
     }
 
+    /// Whether a frame is due, and resets the flag.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::replace(&mut self.dirty, false)
+    }
+
+    /// Asks for a frame without changing anything else.
+    pub fn redraw(&mut self) {
+        self.dirty = true;
+    }
+
     /// The editor session the run loop should perform, if any.
     pub fn take_editor_request(&mut self) -> Option<EditorRequest> {
         self.editor_request.take()
@@ -432,6 +455,7 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        self.dirty = true;
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.quit = true;
             return;
@@ -1232,6 +1256,7 @@ impl App {
     }
 
     pub fn reload(&mut self) {
+        self.dirty = true;
         self.stamp = self.store.stamp().unwrap_or(self.stamp);
         match self.store.tasks(None) {
             Ok(tasks) => self.tasks = tasks,
@@ -1272,6 +1297,7 @@ impl App {
     pub fn notify(&mut self, message: impl Into<String>) {
         self.message = Some(message.into());
         self.message_at = self.now;
+        self.dirty = true;
     }
 
     fn move_cursor(&mut self, delta: isize) {

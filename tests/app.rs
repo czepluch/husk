@@ -1161,3 +1161,24 @@ fn the_bar_counts_unreadable_files_and_unsynced_lists() {
         "{message}"
     );
 }
+
+#[test]
+fn a_frame_is_due_only_after_something_changed() {
+    let mut s = sample();
+    let app = &mut s.app;
+    assert!(app.take_dirty(), "the first frame");
+    assert!(!app.take_dirty(), "nothing since");
+    app.poll();
+    assert!(!app.take_dirty(), "an idle poll asks for nothing");
+    app.handle_key(key('j'));
+    assert!(app.take_dirty(), "a key");
+    app.notify("hello");
+    assert!(app.take_dirty(), "a message");
+    app.now += chrono::Duration::seconds(6);
+    app.poll();
+    assert!(app.take_dirty(), "the message faded");
+    app.reload();
+    assert!(app.take_dirty(), "a reload");
+    app.redraw();
+    assert!(app.take_dirty(), "an explicit request");
+}

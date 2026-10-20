@@ -54,17 +54,24 @@ fn event_loop(
     reload: &impl Fn() -> Result<Theme>,
     changes: &mpsc::Receiver<()>,
 ) -> Result<()> {
+    let mut drawn_minute = None;
     while !app.quit {
         if changes.try_recv().is_ok() {
             while changes.try_recv().is_ok() {}
             apply_reload(app, &mut theme, reload());
         }
-        terminal.draw(|frame| views::draw(frame, app, &theme))?;
-        if event::poll(Duration::from_millis(500))?
-            && let Event::Key(key) = event::read()?
-            && key.kind != KeyEventKind::Release
-        {
-            app.handle_key(key);
+        // Due labels and the clock in the bar move with the minute.
+        let minute = app.now.format("%Y-%m-%d %H:%M").to_string();
+        if app.take_dirty() || drawn_minute.as_ref() != Some(&minute) {
+            terminal.draw(|frame| views::draw(frame, app, &theme))?;
+            drawn_minute = Some(minute);
+        }
+        if event::poll(Duration::from_millis(500))? {
+            match event::read()? {
+                Event::Key(key) if key.kind != KeyEventKind::Release => app.handle_key(key),
+                Event::Resize(_, _) => app.redraw(),
+                _ => {}
+            }
         }
         if let Some(request) = app.take_editor_request() {
             ratatui::restore();
@@ -75,6 +82,7 @@ fn event_loop(
             let edited = edit_with_editor(&request.text, extension);
             *terminal = ratatui::init();
             terminal.clear()?;
+            app.redraw();
             match (edited, request.target) {
                 (Ok(text), EditorTarget::Raw(uid)) => app.apply_raw(&uid, &text),
                 (Ok(text), EditorTarget::Notes(uid)) => app.apply_notes(&uid, &text),
